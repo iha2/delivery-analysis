@@ -21,4 +21,3 @@ Update `README.md` when CLI surface or output columns change.
 ## Corpus index
 
 Code exploration follows the **Index Protocol** (`.agents/skills/graphify-search/SKILL.md`): subgraph retrieval before lexical search.
-
