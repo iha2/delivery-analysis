@@ -1,0 +1,26 @@
+# Noise / generated
+node_modules/
+__pycache__/
+*.pyc
+.venv/
+.git/
+graphify-out/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Secrets / local env
+.env
+.env.*
+
+# Large data / report dumps (not source knowledge)
+data/
+results/
+analysis-results/
+*.xlsx
+*.csv
+
+# Lockfiles
+uv.lock
+poetry.lock
+package-lock.json

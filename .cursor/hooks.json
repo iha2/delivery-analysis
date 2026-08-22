@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "hooks": {
+    "beforeSubmitPrompt": [
+      {
+        "command": ".cursor/hooks/graphify-refresh.sh",
+        "matcher": "UserPromptSubmit",
+        "timeout": 180,
+        "failClosed": false
+      }
+    ]
+  }
+}

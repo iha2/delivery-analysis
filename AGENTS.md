@@ -17,3 +17,8 @@ To add a command: see [docs/extending-the-cli.md](docs/extending-the-cli.md).
 See [docs/architecture.md](docs/architecture.md) for module map, pipeline phases, and catalog search conventions.
 
 Update `README.md` when CLI surface or output columns change.
+
+## Corpus index
+
+Code exploration follows the **Index Protocol** (`.agents/skills/graphify-search/SKILL.md`): subgraph retrieval before lexical search.
+

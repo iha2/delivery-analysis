@@ -1,0 +1,6 @@
+---
+description: Corpus index retrieval precedence
+alwaysApply: true
+---
+
+Before Grep/Glob/Read exploration of this repo, follow the **Index Protocol** in `.agents/skills/graphify-search/SKILL.md`. The hook at `.cursor/hooks/graphify-refresh.sh` keeps `graphify-out/` synchronized; propagate the protocol to subagents.
