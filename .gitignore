@@ -1,0 +1,13 @@
+# Generated PR timeline reports (default output from github_pr_timeline_report.py)
+analysis-results/
+
+.DS_Store
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+graphify-out/
+data/
+.agents/
+

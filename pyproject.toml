@@ -1,0 +1,23 @@
+[project]
+name = "github-analysis"
+version = "2.0.0"
+description = "GitHub team and individual PR metrics for managers and engineering leads"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = []
+
+[project.optional-dependencies]
+excel = ["openpyxl>=3.1.0", "pyyaml>=6.0"]
+
+[project.scripts]
+github-analysis = "github_analysis.cli.main:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["github_analysis"]
+
+[dependency-groups]
+excel = ["openpyxl>=3.1.0", "pyyaml>=6.0"]
