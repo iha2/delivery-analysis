@@ -1,1 +1,1 @@
-"""CLI entry points for github-analysis."""
+"""CLI entry points for the GitHub report commands (run through `delivery-analysis`)."""

@@ -212,7 +212,7 @@ git clone https://github.com/iha2/github-analysis.git
 cd github-analysis
 uv sync --group excel
 
-uv run github-analysis run \
+uv run delivery-analysis run \
   --repo global-services \
   --month 2026-05 \
   --merged-only \
@@ -336,7 +336,7 @@ winget install --id GitHub.cli
 git clone https://github.com/iha2/github-analysis.git $HOME\github-analysis
 cd $HOME\github-analysis
 uv sync --group excel
-uv run github-analysis --version
+uv run delivery-analysis --version
 ```
 
 4. Sign in to GitHub:
@@ -383,7 +383,7 @@ C:\Users\YourName\github-analysis-results\combined-2026-07.xlsx
 
 ```powershell
 cd $HOME\github-analysis
-uv run github-analysis run --repo global-services --month 2026-07 --merged-only --output-dir "$env:USERPROFILE\github-analysis-results"
+uv run delivery-analysis run --repo global-services --month 2026-07 --merged-only --output-dir "$env:USERPROFILE\github-analysis-results"
 ```
 
 For the full five-repo **combined** workbook without bash, use **Git Bash** and `./scripts/run_monthly.sh` as above.
@@ -432,7 +432,7 @@ gh --version    # expect 2.30 or newer
 git clone https://github.com/iha2/github-analysis.git
 cd github-analysis
 uv sync --group excel
-uv run github-analysis --version    # expect 2.0.0
+uv run delivery-analysis --version    # expect 2.0.0
 ```
 
 `uv sync` installs Python 3.9+ automatically. The `excel` group adds `openpyxl` for `.xlsx` output.
@@ -472,7 +472,7 @@ Run these before a large report. All should succeed without errors:
 gh auth status
 gh api user --jq .login
 gh repo view Customer-Engagement-Digital-Technology/global-services   # or your target repo
-uv run github-analysis --version
+uv run delivery-analysis --version
 ```
 
 `gh auth status` should show a logged-in account with `Token scopes` including `repo` (or sufficient fine-grained permissions). If `gh repo view` returns 404, fix token scope or SSO authorization before running a report.
@@ -501,7 +501,7 @@ All report files (Excel, TSV, JSON cache, run log) are written to one **output d
 - **You do not need a `~/Dev` directory.** Clone this repo anywhere (e.g. `~/Projects/github-analysis`, `C:\Users\you\github-analysis`).
 - **Default report output** is **`~/github-analysis-results`** on macOS/Linux, or **`%USERPROFILE%\github-analysis-results`** on Windows. The tool creates the folder on first run.
 - **Pick any output folder** with `GITHUB_ANALYSIS_RESULTS` or `--output-dir` (team share, Documents, Desktop, etc.).
-- **Monthly shell scripts** (`run_monthly.sh`, `run_cedt_trio.sh`) require **bash** — built-in on macOS/Linux; on Windows use **Git Bash**, **WSL**, or run the equivalent `uv run github-analysis` commands from README.
+- **Monthly shell scripts** (`run_monthly.sh`, `run_cedt_trio.sh`) require **bash** — built-in on macOS/Linux; on Windows use **Git Bash**, **WSL**, or run the equivalent `uv run delivery-analysis` commands from README.
 
 **Windows — set output folder (PowerShell, persistent for session):**
 
@@ -513,7 +513,7 @@ New-Item -ItemType Directory -Force -Path $env:GITHUB_ANALYSIS_RESULTS
 **Windows — one-off CLI override:**
 
 ```powershell
-uv run github-analysis run --repo global-services --month 2026-07 --merged-only `
+uv run delivery-analysis run --repo global-services --month 2026-07 --merged-only `
   --output-dir "$HOME\Documents\GitHubReports"
 ```
 
@@ -529,7 +529,7 @@ mkdir -p "$GITHUB_ANALYSIS_RESULTS"
 Then:
 
 ```bash
-uv run github-analysis run --repo global-services --month 2026-07 --merged-only
+uv run delivery-analysis run --repo global-services --month 2026-07 --merged-only
 # writes under ~/Reports/github-metrics/
 ```
 
@@ -545,7 +545,7 @@ Monthly scripts honor the same variable:
 Override the env var for a single command:
 
 ```bash
-uv run github-analysis run --repo global-services --month 2026-07 --merged-only \
+uv run delivery-analysis run --repo global-services --month 2026-07 --merged-only \
   --output-dir ~/Desktop/july-spot-check
 ```
 
@@ -563,9 +563,9 @@ When you pass `-o path/to/report.xlsx`, sibling TSV, cache, and log files are wr
 ### CLI help
 
 ```bash
-uv run github-analysis --help
-uv run github-analysis run --help
-uv run github-analysis analyze --help
+uv run delivery-analysis --help
+uv run delivery-analysis run --help
+uv run delivery-analysis analyze --help
 ```
 
 ---
@@ -578,7 +578,7 @@ uv run github-analysis analyze --help
 | **`analyze`** | Fetch and write TSV + cache only |
 | **`export`** | Build Excel from existing TSV files |
 
-All commands: `uv run github-analysis <command> --help`
+All commands: `uv run delivery-analysis <command> --help`
 
 ### CLI options
 
@@ -660,7 +660,7 @@ Every metric (merged, authored, reviews, `prs_open` snapshot at month-end) uses 
 **Auto-named files** (no `-o`):
 
 ```bash
-uv run github-analysis run \
+uv run delivery-analysis run \
   --repo global-services \
   --month 2026-05 \
   --merged-only --workers 4
@@ -672,13 +672,13 @@ uv run github-analysis run \
 **Analyze then export separately:**
 
 ```bash
-uv run github-analysis analyze \
+uv run delivery-analysis analyze \
   --repo global-services \
   --start-date 2026-05-01 --end-date 2026-06-01 \
   --merged-only --workers 4 \
   -o ~/github-analysis-results/global-services-may-2026.tsv
 
-uv run github-analysis export \
+uv run delivery-analysis export \
   --summary ~/github-analysis-results/global-services-may-2026_person_summary.tsv \
   --detail ~/github-analysis-results/global-services-may-2026.tsv \
   -o ~/github-analysis-results/global-services-may-2026.xlsx
@@ -687,7 +687,7 @@ uv run github-analysis export \
 **Rebuild from cache** (no GitHub fetch; person summary recomputed from cached timestamps):
 
 ```bash
-uv run github-analysis analyze \
+uv run delivery-analysis analyze \
   --from-cache ~/github-analysis-results/global-services-may-2026_raw.json \
   --repo global-services \
   --start-date 2026-05-01 --end-date 2026-06-01 \
@@ -859,7 +859,7 @@ Edit `github_analysis/config.py`:
 | Rate limit / search cap | See [GitHub API limits](#github-api-limits) |
 
 ```bash
-uv run github-analysis --version
+uv run delivery-analysis --version
 gh auth status
 gh repo view OWNER/REPO
 ```

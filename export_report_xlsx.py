@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Legacy wrapper — use: uv run github-analysis export ..."""
+"""Legacy wrapper — use: uv run delivery-analysis export ..."""
 
 from github_analysis.cli.main import main
 

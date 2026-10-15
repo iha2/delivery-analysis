@@ -14,7 +14,7 @@ def test_help_lists_the_three_commands(capsys):
 
 def test_no_arguments_prints_help_and_succeeds(capsys):
     assert main([]) == 0
-    assert "Analyze GitHub pull-request activity" in capsys.readouterr().out
+    assert "delivery-analysis" in capsys.readouterr().out
 
 
 def test_output_dir_rule_still_works_through_the_old_path(monkeypatch, tmp_path):

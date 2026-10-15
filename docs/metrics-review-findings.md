@@ -203,7 +203,7 @@ When `authored_in_month_by_user is None`, fallback uses `len(detail_rows)` for a
 ### Step A — Recompute from cache
 
 ```bash
-uv run github-analysis analyze \
+uv run delivery-analysis analyze \
   --from-cache ~/Documents/global-services-may-2026_raw.json \
   --repo global-services \
   --start-date 2026-05-01 --end-date 2026-06-01 \

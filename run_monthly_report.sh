@@ -18,8 +18,8 @@ shift 3
 echo "==> uv sync"
 uv sync --group excel
 
-echo "==> github-analysis run"
-uv run github-analysis run \
+echo "==> delivery-analysis run"
+uv run delivery-analysis run \
   --repo "$REPO" \
   --start-date "$START" \
   --end-date "$END" \

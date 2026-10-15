@@ -41,14 +41,14 @@ def register(subparsers: argparse._SubParsersAction) -> None:
             "  {repo}_{start}_to_{end}.xlsx\n\n"
             "Examples:\n"
             "  # All of May 2026 (recommended):\n"
-            "  github-analysis run --repo global-services --month 2026-05 --merged-only\n"
+            "  delivery-analysis run --repo global-services --month 2026-05 --merged-only\n"
             "  # May 15 through month end — separate files from a full-month run:\n"
-            "  github-analysis run --repo global-services --start-date 2026-05-15 --end-date 2026-06-01 --merged-only\n"
+            "  delivery-analysis run --repo global-services --start-date 2026-05-15 --end-date 2026-06-01 --merged-only\n"
             "  # Custom Excel base name (sibling TSV, cache, and log share this stem):\n"
-            "  github-analysis run --repo global-services --month 2026-05 --merged-only --workers 4 \\\n"
+            "  delivery-analysis run --repo global-services --month 2026-05 --merged-only --workers 4 \\\n"
             "    -o ~/Reports/global-services-may-2026.xlsx\n"
             "  # All outputs under a custom directory:\n"
-            "  github-analysis run --repo global-services --month 2026-05 --merged-only \\\n"
+            "  delivery-analysis run --repo global-services --month 2026-05 --merged-only \\\n"
             "    --output-dir ~/Reports/github-metrics"
         ),
     )

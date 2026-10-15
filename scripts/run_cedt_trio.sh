@@ -92,8 +92,8 @@ run_one() {
   local repo="$1"
   local workers="$2"
   local stem="${repo}-${STEM_SUFFIX}"
-  echo "==> github-analysis run: $repo"
-  uv run github-analysis run \
+  echo "==> delivery-analysis run: $repo"
+  uv run delivery-analysis run \
     --repo "$repo" \
     --start-date "$START" \
     --end-date "$END" \

@@ -17,11 +17,11 @@ def register(subparsers: argparse._SubParsersAction) -> None:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "Examples:\n"
-            "  github-analysis export \\\n"
+            "  delivery-analysis export \\\n"
             "    --summary ~/Documents/global-services_2026-05-01_to_2026-06-01_person_summary.tsv \\\n"
             "    --detail ~/Documents/global-services_2026-05-01_to_2026-06-01.tsv \\\n"
             "    -o ~/Documents/global-services_2026-05-01_to_2026-06-01.xlsx\n"
-            "  github-analysis export --summary summary.tsv --summary-only -o team.xlsx"
+            "  delivery-analysis export --summary summary.tsv --summary-only -o team.xlsx"
         ),
     )
     parser.add_argument(

@@ -25,6 +25,7 @@ from delivery_analysis.settings import (
 )
 from delivery_analysis.store.db import connect, migrate
 from delivery_analysis.sync.runner import run_sync
+from github_analysis.cli.commands import COMMAND_REGISTRARS
 
 NO_CONNECTORS_MESSAGE = (
     "No connectors are configured yet. Bitbucket, Jira, Confluence, and Claude usage "
@@ -35,10 +36,23 @@ NO_CONNECTORS_MESSAGE = (
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="delivery-analysis",
-        description="Delivery analytics app: sync sources into SQLite and view them locally.",
+        description=(
+            "Delivery analytics: sync sources into SQLite and view them in a local app, "
+            "plus the GitHub pull-request monthly report.\n\n"
+            "App commands:\n"
+            "  serve     Start the local web app on 127.0.0.1\n"
+            "  sync      Sync configured sources into the local database\n"
+            "  doctor    Show which credential variables are present (names only)\n\n"
+            "GitHub report commands (need GitHub CLI `gh` authenticated with read access):\n"
+            "  analyze   Fetch data from GitHub and write TSV reports\n"
+            "  export    Convert TSV reports to Excel\n"
+            "  run       Analyze + export in one step\n\n"
+            "Run `delivery-analysis <command> --help` for command-specific options."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
-    commands = parser.add_subparsers(dest="command", metavar="<command>", required=True)
+    commands = parser.add_subparsers(dest="command", metavar="<command>", required=False)
 
     serve = commands.add_parser("serve", help="Start the local web app on 127.0.0.1")
     serve.add_argument("--port", type=int, default=8000, help="Port to listen on (default 8000)")
@@ -48,6 +62,9 @@ def build_parser() -> argparse.ArgumentParser:
     sync.add_argument("--source", help="Only sync the connector with this name")
 
     commands.add_parser("doctor", help="Show which credential variables are present (names only)")
+
+    for register in COMMAND_REGISTRARS:
+        register(commands)
     return parser
 
 
@@ -125,7 +142,15 @@ def main(
     environ: Optional[Dict[str, str]] = None,
     connectors: Optional[List[Connector]] = None,
 ) -> int:
-    args = build_parser().parse_args(argv)
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    if not args.command:
+        parser.print_help()
+        return 0
+    legacy_handler = getattr(args, "handler", None)
+    if legacy_handler is not None:
+        # analyze / export / run: the GitHub report commands keep their own behavior.
+        return int(legacy_handler(args))
     env = os.environ if environ is None else environ
     path = default_env_path() if env_path is None else env_path
     env_error = False

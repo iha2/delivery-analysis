@@ -7,7 +7,7 @@
    - `run(args) -> int` — command logic
 2. Register in `github_analysis/cli/commands/__init__.py` → `COMMAND_REGISTRARS`
 
-The command appears in `github-analysis --help` and gets its own `--help`.
+The command appears in `delivery-analysis --help` and gets its own `--help`.
 
 ## Existing commands
 
