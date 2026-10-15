@@ -44,7 +44,7 @@ def test_secret_never_shows_its_value():
 
 def test_credential_status_reports_names_only():
     status = s.credential_status({"ATLASSIAN": "x", "ANTHROPIC": "  "})
-    assert status == {"ATLASSIAN": True, "ANTHROPIC": False, "ANTHROPIC_ADMIN": False}
+    assert status == {"ATLASSIAN": True, "BITBUCKET": False, "ANTHROPIC": False, "ANTHROPIC_ADMIN": False}
 
 
 def test_redact_removes_every_secret():
@@ -101,3 +101,15 @@ def test_load_env_file_rejects_non_utf8_with_a_plain_message(tmp_path):
         "Save it as UTF-8 and try again." % path
     )
     assert "secret" not in message
+
+
+def test_settings_reads_the_bitbucket_workspace_and_defaults_the_window():
+    assert s.Settings.from_env({}).bitbucket_workspace == ""
+    assert s.Settings.from_env({}).window_days == 90
+    assert s.Settings.from_env({"BITBUCKET_WORKSPACE": " keyhealthtech "}).bitbucket_workspace == "keyhealthtech"
+
+
+def test_bitbucket_is_a_known_credential_and_gets_redacted():
+    assert "BITBUCKET" in s.CREDENTIAL_VARS
+    assert s.secret_values({"BITBUCKET": "tok-bb-1"}) == ["tok-bb-1"]
+    assert s.credential_status({"BITBUCKET": "x"})["BITBUCKET"] is True

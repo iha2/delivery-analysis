@@ -9,7 +9,7 @@ from zoneinfo import ZoneInfo
 OUTPUT_DIR_ENV_VAR = "GITHUB_ANALYSIS_RESULTS"
 DEFAULT_OUTPUT_DIR = Path.home() / "github-analysis-results"
 DB_FILE_NAME = "delivery.sqlite"
-CREDENTIAL_VARS = ("ATLASSIAN", "ANTHROPIC", "ANTHROPIC_ADMIN")
+CREDENTIAL_VARS = ("ATLASSIAN", "BITBUCKET", "ANTHROPIC", "ANTHROPIC_ADMIN")
 
 
 def parse_env_text(text: str) -> Dict[str, str]:
@@ -119,10 +119,15 @@ class Settings:
     report_tz: ZoneInfo = ZoneInfo("America/New_York")
     overlap_days: int = 7
     host: str = "127.0.0.1"
+    window_days: int = 90
+    bitbucket_workspace: str = ""
 
     @classmethod
     def from_env(cls, environ: Optional[Mapping[str, str]] = None) -> "Settings":
         env = os.environ if environ is None else environ
         raw = (env.get(OUTPUT_DIR_ENV_VAR) or "").strip()
         base = Path(os.path.expanduser(raw)) if raw else DEFAULT_OUTPUT_DIR
-        return cls(db_path=base / DB_FILE_NAME)
+        return cls(
+            db_path=base / DB_FILE_NAME,
+            bitbucket_workspace=(env.get("BITBUCKET_WORKSPACE") or "").strip(),
+        )
