@@ -159,7 +159,8 @@ def _per_person(conn, metric: Metric, scope: Scope, window: Window, people: Peop
             "ranked": False,
             "rank": None,
         })
-    every = [value for values in by_person.values() for value in values]
+    # The team total covers every row shown, including the Unmapped row.
+    every = [value for values in by_person.values() for value in values] + unmapped
     team: Dict[str, Any] = {"value": _round(aggregate(every, metric.aggregate)), "sample": len(every)}
     if metric.aggregate == "median":
         team["p85"] = _round(percentile(every, 85))

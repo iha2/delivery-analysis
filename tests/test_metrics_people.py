@@ -82,3 +82,24 @@ def test_set_member_status_is_manual_and_validated(conn):
         pp.set_member_status(conn, "t1", "p-ann", "inactive", NOW)
     with pytest.raises(LookupError):
         pp.set_member_status(conn, "t1", "nobody", "active", NOW)
+
+
+def test_the_name_hint_skips_payloads_without_a_name_and_falls_back_to_the_commit_author(conn):
+    seed(conn)
+    conn.execute(
+        "INSERT INTO raw_payload (source, source_id, kind, json, fetched_at) VALUES (?, ?, ?, ?, ?)",
+        ("bitbucket", f"{REPO}#1", "pull_request", '{"participants": [{"user": {"account_id": "acc-zed"}}]}', NOW),
+    )
+    assert pp.unmapped_accounts(conn)[0]["name_hint"] is None
+    conn.execute(
+        "INSERT INTO raw_payload (source, source_id, kind, json, fetched_at) VALUES (?, ?, ?, ?, ?)",
+        ("bitbucket", f"{REPO}:z1", "commit",
+         '{"author": {"raw": "Zed Committer <zed@corp.example>", "user": {"account_id": "acc-zed"}}}', NOW),
+    )
+    assert pp.unmapped_accounts(conn)[0]["name_hint"] == "Zed Committer"
+    conn.execute(
+        "INSERT INTO raw_payload (source, source_id, kind, json, fetched_at) VALUES (?, ?, ?, ?, ?)",
+        ("bitbucket", f"{REPO}#2", "pr_activity",
+         '[{"comment": {"user": {"account_id": "acc-zed", "display_name": "Zed Reviewer"}}}]', NOW),
+    )
+    assert pp.unmapped_accounts(conn)[0]["name_hint"] == "Zed Reviewer"

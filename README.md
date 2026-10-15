@@ -915,3 +915,19 @@ After `delivery-analysis sync`, every team is updated: new committers are added,
 5. Build a team from the commits: `uv run delivery-analysis teams discover --repo bitbucket:movedocs_v1.0 --save MoveDocs`
 
 The first sync covers the last 90 days. Pull request detail (merge time, review comments and approvals, file counts) is fetched in budgeted batches, newest first, so large repositories fill in over several syncs without hitting Bitbucket's rate limit. `repos list` shows how far detail has got. Assigned reviewers and whether each has approved are stored on every pull request.
+
+### Local app
+
+`uv run delivery-analysis serve` opens the app on `http://127.0.0.1:8000`. It shows stored data at once and refreshes sources older than `REFRESH_AFTER_MINUTES` (default 60) in the background.
+
+| Screen | What it does |
+|---|---|
+| Dashboard | Throughput, time to merge, lead-time breakdown, review load, work in progress; metrics that need Jira or Claude usage show as waiting |
+| Rankings | Team members ordered by any metric, with trend against their previous window, sample size, and an Unmapped row |
+| Person | One person's pull requests, reviews given, reviews waiting on them, and weekly commits |
+| Selection | Add and remove synced repositories |
+| Teams | Create teams, include or exclude members, map unmapped accounts (for example reviewers who never commit) |
+| Sources | Sync status, errors, review-detail progress, refresh now and full resync |
+| Settings | Time zone, windows, and which credentials are present (names only) |
+
+The app only answers on localhost and refuses cross-site writes.

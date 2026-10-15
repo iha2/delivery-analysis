@@ -5,6 +5,7 @@ import sqlite3
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
+from delivery_analysis.connectors.bitbucket.normalize import parse_author_raw
 from delivery_analysis.teams.reconcile import new_id
 
 
@@ -121,18 +122,29 @@ def _find_display_name(data: Any, account: str) -> Optional[str]:
     return None
 
 
+def _commit_author_name(data: Any, account: str) -> Optional[str]:
+    author = data.get("author") if isinstance(data, dict) else None
+    if not isinstance(author, dict) or (author.get("user") or {}).get("account_id") != account:
+        return None
+    name, _ = parse_author_raw(author.get("raw"))
+    return name or None
+
+
 def _name_hint(conn: sqlite3.Connection, source: str, account: str) -> Optional[str]:
-    row = conn.execute(
-        "SELECT json FROM raw_payload WHERE source = ? AND kind IN ('pr_activity', 'pull_request') "
-        "AND json LIKE ? LIMIT 1",
-        (source, f'%"{account}"%'),
-    ).fetchone()
-    if row is None:
-        return None
-    try:
-        return _find_display_name(json.loads(row["json"]), account)
-    except ValueError:
-        return None
+    """A display name from stored activity (best), else the name in a commit's author line."""
+    pattern = f'%"{account}"%'
+    for kind, finder in (("pr_activity", _find_display_name), ("commit", _commit_author_name)):
+        for row in conn.execute(
+            "SELECT json FROM raw_payload WHERE source = ? AND kind = ? AND json LIKE ? LIMIT 5",
+            (source, kind, pattern),
+        ).fetchall():
+            try:
+                found = finder(json.loads(row["json"]), account)
+            except ValueError:
+                continue
+            if found:
+                return found
+    return None
 
 
 def unmapped_accounts(conn: sqlite3.Connection, limit: int = 200) -> List[Dict[str, Any]]:

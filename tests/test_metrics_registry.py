@@ -35,7 +35,7 @@ def test_per_person_rows_rank_trend_unranked_and_unmapped(conn):
         ("Bob Builder", 1.0, 1, 0.0, None, False, None),
         ("Unmapped (1 account)", 2.0, 2, None, None, False, None),
     ]
-    assert result["team"] == {"value": 5.0, "sample": 5}
+    assert result["team"] == {"value": 7.0, "sample": 7}
     assert result["window"]["label"] == "September 2026"
 
 
@@ -85,3 +85,11 @@ def test_percentile_and_aggregate():
     assert r.aggregate([], "sum") == 0.0 and r.aggregate([], "median") is None
     assert r.aggregate([1, 0, 1, 0], "mean") == 0.5
     assert actor_key(("bitbucket", "a")) == "bitbucket:a"
+
+
+def test_the_team_total_includes_activity_by_unmapped_accounts(conn):
+    seed(conn)
+    data = {SEPT_WINDOW.start: {"bitbucket:acc-ann": [10.0], "bitbucket:acc-zed": [30.0, 50.0]}}
+    metric = r.Metric("t", "T", "hours", r.PER_PERSON, ("bitbucket",), aggregate="median", compute=counting(data))
+    result = r.run_metric(conn, metric, Scope(), SEPT_WINDOW)
+    assert result["team"]["value"] == 30.0 and result["team"]["sample"] == 3

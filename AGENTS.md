@@ -152,3 +152,7 @@ Rosters are discovered from commits and stored in SQLite (`team`, `team_member`,
 ### Bitbucket connector (agents)
 
 Code: `delivery_analysis/connectors/bitbucket/` (`client.py` HTTP and back-off, `normalize.py` pure mapping, `resolve.py`, `connector.py`), `delivery_analysis/store/repo_selection.py`, `delivery_analysis/cli/repos.py`. A repository scope string is the repository UUID and the connector name is `bitbucket`; team rosters rely on that to stay protected when a sync fails. Tests use `tests/bitbucket_fakes.py` (a `MockTransport` fake) and made-up people only; never call the live API from a test and never print or store the `BITBUCKET` token.
+
+### App and metrics (agents)
+
+Metrics live in `delivery_analysis/metrics/` (`catalog.py` lists them; each compute function returns per-account observations, and `registry.run_metric` turns them into per-person rows). The web API is `delivery_analysis/app/api.py`; pages are static files in `delivery_analysis/app/static/` (no build step, Chart.js vendored). Add a metric by writing its compute function and giving its catalog entry `compute=`; screens pick it up without changes. Never compute numbers in the browser.
