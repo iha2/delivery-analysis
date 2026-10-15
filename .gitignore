@@ -11,3 +11,11 @@ graphify-out/
 data/
 .agents/
 
+
+# Local secrets (ATLASSIAN, ANTHROPIC tokens)
+.env
+.env.*
+!.env.example
+
+# Subagent-driven-development scratch
+.superpowers/
