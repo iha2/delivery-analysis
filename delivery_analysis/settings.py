@@ -83,9 +83,9 @@ def secret_values(
 
 
 def redact(text: str, secrets: Iterable[str]) -> str:
-    for secret in secrets:
-        if secret:
-            text = text.replace(secret, "***")
+    # Longest first so a secret that contains another cannot leave its tail behind.
+    for secret in sorted({s for s in secrets if s}, key=len, reverse=True):
+        text = text.replace(secret, "***")
     return text
 
 

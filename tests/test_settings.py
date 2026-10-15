@@ -52,6 +52,11 @@ def test_redact_removes_every_secret():
     assert s.redact(text, ["sk-live-123", "tok-9", ""]) == "failed with *** and also ***"
 
 
+def test_redact_handles_overlapping_and_duplicate_secrets():
+    assert s.redact("key abcdef here", ["abc", "abcdef"]) == "key *** here"
+    assert s.redact("x abc y", ["abc", "abc"]) == "x *** y"
+
+
 def test_secret_values_lists_only_present_values():
     assert s.secret_values({"ATLASSIAN": "a", "OTHER": "b"}) == ["a"]
 
