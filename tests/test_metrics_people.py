@@ -103,3 +103,53 @@ def test_the_name_hint_skips_payloads_without_a_name_and_falls_back_to_the_commi
          '[{"comment": {"user": {"account_id": "acc-zed", "display_name": "Zed Reviewer"}}}]', NOW),
     )
     assert pp.unmapped_accounts(conn)[0]["name_hint"] == "Zed Reviewer"
+
+
+def _email_only_commits(conn, email, count=2):
+    from metrics_seed import commit
+
+    for n in range(count):
+        commit(conn, f"e{n}", None, email, f"2026-09-0{n + 6}T12:00:00Z")
+
+
+def _email_rows(conn):
+    return [row for row in pp.unmapped_accounts(conn) if row["source"] == "email"]
+
+
+def test_an_email_only_commit_author_is_unmapped_with_its_activity(conn):
+    seed(conn)
+    _email_only_commits(conn, "New.Person@Corp.Example")
+    assert _email_rows(conn) == [
+        {"source": "email", "account": "new.person@corp.example", "activity": 2, "name_hint": None}
+    ]
+
+
+def test_an_email_only_author_with_a_person_is_not_unmapped(conn):
+    seed(conn)  # c2 has no account but ann@corp.example is mapped
+    assert _email_rows(conn) == []
+
+
+def test_an_email_hint_comes_from_a_commit_raw_payload(conn):
+    seed(conn)
+    _email_only_commits(conn, "New.Person@Corp.Example")
+    conn.execute(
+        "INSERT INTO raw_payload (source, source_id, kind, json, fetched_at) VALUES (?, ?, ?, ?, ?)",
+        ("bitbucket", f"{REPO}:e0", "commit", '{"author": {"raw": "Newt Person <New.Person@Corp.Example>"}}', NOW),
+    )
+    assert _email_rows(conn)[0]["name_hint"] == "Newt Person"
+
+
+def test_mapping_an_email_stores_lower_case_and_the_commits_metric_resolves_it(conn):
+    from metrics_seed import SEPT, TODAY, TZ
+    from delivery_analysis.metrics.catalog import BY_NAME
+    from delivery_analysis.metrics.registry import run_metric
+    from delivery_analysis.metrics.window import make_window
+
+    seed(conn)
+    _email_only_commits(conn, "Ann.New@Corp.Example", count=1)
+    pp.map_identity(conn, "email", " Ann.New@Corp.Example ", person_id="p-ann", now=NOW)
+    stored = conn.execute("SELECT account_id FROM identity WHERE source = 'email' AND account_id LIKE 'ann.new%'")
+    assert [row["account_id"] for row in stored] == ["ann.new@corp.example"]
+    result = run_metric(conn, BY_NAME["commits"], pp.team_scope(conn, "t1"), make_window(SEPT, TZ, TODAY))
+    assert [(r["name"], r["value"]) for r in result["rows"]][0] == ("Ann Example", 3.0)
+    assert _email_rows(conn) == []

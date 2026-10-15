@@ -92,6 +92,9 @@ SELECT source, account, COUNT(*) AS activity FROM (
     SELECT source, author_account AS account FROM change_request
     UNION ALL SELECT source, actor_account FROM change_event
     UNION ALL SELECT source, author_account FROM vcs_commit
+    UNION ALL SELECT 'email', lower(trim(author_email)) FROM vcs_commit
+        WHERE (author_account IS NULL OR author_account = '')
+          AND author_email IS NOT NULL AND author_email != ''
     UNION ALL SELECT 'bitbucket', substr(name, 10) FROM property
         WHERE record_kind = 'change_request' AND name LIKE 'reviewer:%'
 ) a
@@ -130,8 +133,29 @@ def _commit_author_name(data: Any, account: str) -> Optional[str]:
     return name or None
 
 
+def _email_author_name(conn: sqlite3.Connection, email: str) -> Optional[str]:
+    """The name in the author line of a stored commit whose author email is this one."""
+    for row in conn.execute(
+        "SELECT json FROM raw_payload WHERE kind = 'commit' AND lower(json) LIKE ? LIMIT 20",
+        (f"%{email.lower()}%",),
+    ).fetchall():
+        try:
+            data = json.loads(row["json"])
+        except ValueError:
+            continue
+        author = data.get("author") if isinstance(data, dict) else None
+        if not isinstance(author, dict):
+            continue
+        name, found = parse_author_raw(author.get("raw"))
+        if found == email.lower() and name:
+            return name
+    return None
+
+
 def _name_hint(conn: sqlite3.Connection, source: str, account: str) -> Optional[str]:
     """A display name from stored activity (best), else the name in a commit's author line."""
+    if source == "email":
+        return _email_author_name(conn, account)
     pattern = f'%"{account}"%'
     for kind, finder in (("pr_activity", _find_display_name), ("commit", _commit_author_name)):
         for row in conn.execute(
@@ -188,6 +212,8 @@ def map_identity(
 ) -> str:
     """Map an account to an existing or new person (a manual mapping), optionally joining a team."""
     account = (account or "").strip()
+    if source == "email":
+        account = account.lower()
     if not account:
         raise ValueError("An account is required.")
     conn.execute("BEGIN IMMEDIATE")
