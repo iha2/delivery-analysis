@@ -34,3 +34,10 @@ def test_fake_validate_returns_its_problems():
 
 def test_registry_has_no_connectors_yet(tmp_path):
     assert build_connectors(Settings(db_path=tmp_path / "d.sqlite"), {}) == []
+
+
+def test_registry_builds_the_bitbucket_connector_only_when_the_token_is_set(tmp_path):
+    settings = Settings(db_path=tmp_path / "d.sqlite")
+    assert build_connectors(settings, {}) == []
+    built = build_connectors(settings, {"BITBUCKET": "tok-bb-1"})
+    assert [connector.name for connector in built] == ["bitbucket"]

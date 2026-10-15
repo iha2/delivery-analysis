@@ -8,6 +8,7 @@ import webbrowser
 from pathlib import Path
 from typing import Dict, List, Optional
 
+import httpx
 import uvicorn
 
 from delivery_analysis import __version__
@@ -24,14 +25,15 @@ from delivery_analysis.settings import (
     secret_values,
 )
 from delivery_analysis.store.db import connect, migrate
+from delivery_analysis.cli import repos as repos_cli
 from delivery_analysis.cli import teams as teams_cli
 from delivery_analysis.sync.runner import run_sync, utc_now_iso
 from delivery_analysis.teams.reconcile import reconcile_all, stale_repo_keys
 from github_analysis.cli.commands import COMMAND_REGISTRARS
 
 NO_CONNECTORS_MESSAGE = (
-    "No connectors are configured yet. Bitbucket, Jira, Confluence, and Claude usage "
-    "connectors arrive in later specs."
+    "No connectors are configured yet. Set BITBUCKET in .env to enable Bitbucket; Jira, "
+    "Confluence, and Claude usage connectors arrive in later specs."
 )
 
 
@@ -45,7 +47,8 @@ def build_parser() -> argparse.ArgumentParser:
             "  serve     Start the local web app on 127.0.0.1\n"
             "  sync      Sync configured sources into the local database\n"
             "  doctor    Show which credential variables are present (names only)\n"
-            "  teams     Discover, save, import and export team rosters\n\n"
+            "  teams     Discover, save, import and export team rosters\n"
+            "  repos     Choose which repositories are synced\n\n"
             "GitHub report commands (need GitHub CLI `gh` authenticated with read access):\n"
             "  analyze   Fetch data from GitHub and write TSV reports\n"
             "  export    Convert TSV reports to Excel\n"
@@ -69,6 +72,7 @@ def build_parser() -> argparse.ArgumentParser:
     for register in COMMAND_REGISTRARS:
         register(commands)
     teams_cli.register(commands)
+    repos_cli.register(commands)
     return parser
 
 
@@ -87,8 +91,9 @@ def _sync(
     settings: Settings,
     environ: Dict[str, str],
     connectors: Optional[List[Connector]],
+    transport: Optional[httpx.BaseTransport] = None,
 ) -> int:
-    active = connectors if connectors is not None else build_connectors(settings, environ)
+    active = connectors if connectors is not None else build_connectors(settings, environ, transport)
     if not active:
         print(NO_CONNECTORS_MESSAGE)
         return 0
@@ -108,6 +113,11 @@ def _sync(
             redact_values=secrets,
             log=print,
         )
+        if not results:
+            print(
+                "Nothing to sync: no repositories are selected. "
+                "Run: delivery-analysis repos add bitbucket:<workspace>/<repo>"
+            )
         failed_teams = 0
         try:
             lines, failed_teams = reconcile_all(
@@ -137,13 +147,17 @@ def default_env_path() -> Path:
 
 
 def _doctor(
-    settings: Settings, environ: Dict[str, str], env_path: Path, connectors: Optional[List[Connector]]
+    settings: Settings,
+    environ: Dict[str, str],
+    env_path: Path,
+    connectors: Optional[List[Connector]],
+    transport: Optional[httpx.BaseTransport] = None,
 ) -> int:
     print(f".env: {env_path} ({'found' if env_path.is_file() else 'not found'})")
     for name, present in credential_status(environ, CREDENTIAL_VARS).items():
         print(f"{name}: {'present' if present else 'missing'}")
     secrets = secret_values(environ)
-    active = connectors if connectors is not None else build_connectors(settings, environ)
+    active = connectors if connectors is not None else build_connectors(settings, environ, transport)
     for connector in active:
         try:
             problems = connector.validate()
@@ -161,6 +175,7 @@ def main(
     env_path: Optional[Path] = None,
     environ: Optional[Dict[str, str]] = None,
     connectors: Optional[List[Connector]] = None,
+    transport: Optional[httpx.BaseTransport] = None,
 ) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -184,11 +199,13 @@ def main(
     settings = Settings.from_env(env)
     if args.command == "teams":
         return teams_cli.run(args, settings)
+    if args.command == "repos":
+        return repos_cli.run(args, settings, env, transport=transport)
     if args.command == "serve":
         return _serve(args, settings)
     if args.command == "sync":
-        return _sync(args, settings, env, connectors)
-    code = _doctor(settings, env, path, connectors)
+        return _sync(args, settings, env, connectors, transport)
+    code = _doctor(settings, env, path, connectors, transport)
     return 1 if env_error else code
 
 

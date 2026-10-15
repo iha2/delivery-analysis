@@ -9,6 +9,7 @@ from typing import Callable, List, Tuple
 from delivery_analysis.identity.merge import merge_identities
 from delivery_analysis.settings import Settings
 from delivery_analysis.store.db import connect, migrate
+from delivery_analysis.store.repo_selection import resolve as resolve_selected
 from delivery_analysis.sync.runner import utc_now_iso
 from delivery_analysis.teams.discover import discover_people, unknown_repos, window_start
 from delivery_analysis.teams.reconcile import create_team, reconcile_team
@@ -57,6 +58,15 @@ def parse_repo(text: str) -> Repo:
     return source.strip(), repository.strip()
 
 
+def _resolved(conn: sqlite3.Connection, texts) -> List[Repo]:
+    """Parse source:repo texts; a slug or full name of a selected repository becomes its stored id."""
+    repos: List[Repo] = []
+    for text in texts:
+        source, name = parse_repo(text)
+        repos.append((source, resolve_selected(conn, source, name)))
+    return repos
+
+
 def _print_roster(conn: sqlite3.Connection, team_id: str) -> None:
     rows = conn.execute(
         "SELECT p.display_name AS name, m.status AS status, m.last_commit AS last "
@@ -70,7 +80,7 @@ def _print_roster(conn: sqlite3.Connection, team_id: str) -> None:
 
 def _discover(conn: sqlite3.Connection, args: argparse.Namespace, now: str) -> int:
     days = parse_since(args.since)
-    repos: List[Repo] = [parse_repo(text) for text in args.repo]
+    repos = _resolved(conn, args.repo)
     if args.save:
         team_id = create_team(conn, args.save, repos, days, now=now)
         print(reconcile_team(conn, team_id, now).summary())
@@ -100,7 +110,7 @@ def run(args: argparse.Namespace, settings: Settings, *, now: Callable[[], str] 
         if args.teams_command == "discover":
             return _discover(conn, args, now())
         if args.teams_command == "import":
-            repos = [parse_repo(text) for text in (args.repo or [])]
+            repos = _resolved(conn, args.repo or [])
             for line in import_teams(conn, Path(args.path), repos, now()):
                 print(line)
             return 0

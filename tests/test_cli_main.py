@@ -109,7 +109,7 @@ def test_doctor_reports_connector_readiness_redacted(tmp_path, capsys, monkeypat
     ready = FakeConnector(name="good")
     broken = FakeConnector(name="bad", problems=["rejected tok-ABC-123"])
     monkeypatch.setattr(
-        "delivery_analysis.cli.main.build_connectors", lambda settings, environ: [ready, broken]
+        "delivery_analysis.cli.main.build_connectors", lambda settings, environ, transport=None: [ready, broken]
     )
     assert run(["doctor"], tmp_path, env) == 0
     out = capsys.readouterr().out

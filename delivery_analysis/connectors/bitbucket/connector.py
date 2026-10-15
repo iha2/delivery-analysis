@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterator, List, Optional, Set
 from urllib.parse import quote
@@ -57,6 +58,8 @@ class BitbucketConnector:
         conn = connect(self._db_path)
         try:
             return list_selected(conn, SOURCE)
+        except sqlite3.OperationalError:
+            return []  # database not migrated yet
         finally:
             conn.close()
 
