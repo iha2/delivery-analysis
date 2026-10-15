@@ -1,3 +1,5 @@
+import sqlite3
+
 import pytest
 
 from delivery_analysis.connectors.fake import FakeConnector
@@ -131,3 +133,49 @@ def test_two_sources_writing_many_batches_at_once_lose_nothing(conn):
     results = runner.run_sync(conn, [many("a"), many("b")], now=CLOCK)
     assert all(r.status == "ok" for r in results)
     assert len(rows(conn)) == 50
+
+
+class BrokenDiscovery:
+    name = "broken"
+
+    def scopes(self):
+        raise RuntimeError("scope discovery down tok-9")
+
+    def sync(self, scope, since):
+        return iter(())
+
+
+def test_a_connector_failing_scope_discovery_does_not_block_others(conn):
+    healthy = FakeConnector(name="healthy", batches={"main": [Batch([rec(5, "healthy")], cursor="h1")]})
+    results = runner.run_sync(conn, [BrokenDiscovery(), healthy], redact_values=["tok-9"], now=CLOCK)
+    by_connector = {r.connector: r for r in results}
+    assert by_connector["healthy"].status == "ok"
+    assert rows(conn) == ["5"]
+    broken = by_connector["broken"]
+    assert (broken.scope, broken.status, broken.records) == ("*", "failed", 0)
+    assert "***" in broken.error and "tok-9" not in broken.error
+    state = [s for s in ss.list_sync_states(conn) if s["connector"] == "broken"][0]
+    assert (state["scope"], state["stale"]) == ("*", True)
+    assert "tok-9" not in state["error"]
+
+
+def test_failing_to_record_a_failure_does_not_discard_other_results(conn, monkeypatch):
+    real_save_state = runner.sync_state.save_state
+
+    def flaky_save_state(*args, **kwargs):
+        if kwargs.get("status") == "failed":
+            raise sqlite3.OperationalError("database is locked")
+        return real_save_state(*args, **kwargs)
+
+    monkeypatch.setattr("delivery_analysis.sync.runner.sync_state.save_state", flaky_save_state)
+    failing = FakeConnector(
+        name="failing",
+        batches={"main": [Batch([rec(1, "failing")])]},
+        fail_on_batch=0,
+        fail_message="source down",
+    )
+    healthy = FakeConnector(name="healthy", batches={"main": [Batch([rec(5, "healthy")], cursor="h1")]})
+    results = {r.connector: r for r in runner.run_sync(conn, [failing, healthy], now=CLOCK)}
+    assert (results["failing"].status, results["failing"].error) == ("failed", "source down")
+    assert results["healthy"].status == "ok"
+    assert rows(conn) == ["5"]

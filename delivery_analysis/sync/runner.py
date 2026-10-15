@@ -68,11 +68,11 @@ def _run_job(
     now: Callable[[], str],
     emit: Callable[[str], None],
 ) -> SourceResult:
-    with lock:
-        cursor = sync_state.get_cursor(conn, connector.name, scope)
-    since = shift_cursor(cursor, overlap_days)
     total = 0
     try:
+        with lock:
+            cursor = sync_state.get_cursor(conn, connector.name, scope)
+        since = shift_cursor(cursor, overlap_days)
         for batch in connector.sync(scope, since):
             with lock:
                 total += _commit_batch(conn, connector.name, scope, batch, now())
@@ -83,13 +83,31 @@ def _run_job(
         emit(f"{connector.name}/{scope}: ok, {total} record(s)")
         return SourceResult(connector.name, scope, "ok", total, None)
     except Exception as exc:
-        message = redact(str(exc) or exc.__class__.__name__, redact_values)
+        return _record_failure(conn, lock, connector.name, scope, total, exc, redact_values, now, emit)
+
+
+def _record_failure(
+    conn: sqlite3.Connection,
+    lock: threading.Lock,
+    connector_name: str,
+    scope: str,
+    total: int,
+    exc: Exception,
+    redact_values: Sequence[str],
+    now: Callable[[], str],
+    emit: Callable[[str], None],
+) -> SourceResult:
+    """Redact, persist (best effort) and report a failure without ever raising."""
+    message = redact(str(exc) or exc.__class__.__name__, redact_values)
+    try:
         with lock:
             sync_state.save_state(
-                conn, connector.name, scope, status="failed", error=message, records=total, now=now()
+                conn, connector_name, scope, status="failed", error=message, records=total, now=now()
             )
-        emit(f"{connector.name}/{scope}: FAILED, {message}")
-        return SourceResult(connector.name, scope, "failed", total, message)
+    except Exception:
+        pass
+    emit(f"{connector_name}/{scope}: FAILED, {message}")
+    return SourceResult(connector_name, scope, "failed", total, message)
 
 
 def run_sync(
@@ -104,15 +122,22 @@ def run_sync(
 ) -> List[SourceResult]:
     """Sync every scope of every connector, one thread per scope, one writer at a time."""
     emit = log or (lambda message: None)
-    jobs = [
-        (connector, scope)
-        for connector in connectors
-        if only is None or connector.name == only
-        for scope in connector.scopes()
-    ]
-    if not jobs:
-        return []
     lock = threading.Lock()
+    failures: List[SourceResult] = []
+    jobs = []
+    for connector in connectors:
+        if only is not None and connector.name != only:
+            continue
+        try:
+            scopes = list(connector.scopes())
+        except Exception as exc:
+            failures.append(
+                _record_failure(conn, lock, connector.name, "*", 0, exc, redact_values, now, emit)
+            )
+            continue
+        jobs.extend((connector, scope) for scope in scopes)
+    if not jobs:
+        return failures
     with ThreadPoolExecutor(max_workers=len(jobs)) as pool:
         futures = [
             pool.submit(
@@ -120,4 +145,4 @@ def run_sync(
             )
             for connector, scope in jobs
         ]
-        return [future.result() for future in futures]
+        return failures + [future.result() for future in futures]
