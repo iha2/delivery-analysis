@@ -144,3 +144,7 @@ After changing CLI, columns, teams config schema, or monthly workflow: **update 
 - New code lives in `delivery_analysis/` (`core`, `connectors`, `store`, `sync`, `app`, `cli`). The GitHub code moved to `delivery_analysis/connectors/github/`; each old `github_analysis/...` module is a shim that aliases the old name to the new module, so do not add code to the shims.
 - Run tests with `uv run pytest`. Never print, log, or store credential values; use `delivery_analysis.settings.redact` and `Secret`.
 - Specs and plans live in `C:\Work\Planning`, not in this repo.
+
+### Teams (agents)
+
+Rosters are discovered from commits and stored in SQLite (`team`, `team_member`, `person`, `identity`); `config/teams.yaml` is a local, git-ignored import or export, never committed. Code: `delivery_analysis/identity/merge.py` (merging), `delivery_analysis/teams/` (discover, reconcile, import and export), `delivery_analysis/cli/teams.py`. Tests use made-up people on `*.example` domains only; never put real names or emails in tests or fixtures.

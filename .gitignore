@@ -19,3 +19,6 @@ data/
 
 # Subagent-driven-development scratch
 .superpowers/
+
+# Local roster with real names and emails; see config/teams.example.yaml
+config/teams.yaml

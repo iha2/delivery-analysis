@@ -890,3 +890,16 @@ A local app that syncs delivery data into one SQLite file and shows it in the br
 | `uv run delivery-analysis doctor` | Show which credential variables (`ATLASSIAN`, `ANTHROPIC`, `ANTHROPIC_ADMIN`) are present. Names only, never values |
 
 The database is `delivery.sqlite` in the output folder (`GITHUB_ANALYSIS_RESULTS`, default `~/github-analysis-results`). Credentials come from environment variables or a git-ignored `.env` in the repo root.
+
+### Teams from commit history
+
+`delivery-analysis` builds team rosters from who actually committed, so it works for any org.
+
+| Command | What it does |
+|---------|--------------|
+| `uv run delivery-analysis teams discover --repo bitbucket:REPO --since 90d` | Show who committed to the repository in the window. Saves nothing. Possible duplicates and bots are flagged |
+| `uv run delivery-analysis teams discover --repo bitbucket:REPO --save NAME` | Create a team with that name and load its roster |
+| `uv run delivery-analysis teams import FILE --repo bitbucket:REPO` | Load teams from a `.json` or `.yaml` file |
+| `uv run delivery-analysis teams export FILE [--team NAME]` | Write active members to a `.json` or `.yaml` file |
+
+After `delivery-analysis sync`, every team is updated: new committers are added, people with no commit in the window become inactive (never deleted), and your edits are kept. A failed sync never marks anyone inactive. `config/teams.yaml` is a local, git-ignored file; see `config/teams.example.yaml`.

@@ -1,0 +1,27 @@
+# Example teams file. Copy to config/teams.yaml (git-ignored) and edit, or let
+# `delivery-analysis teams discover --repo bitbucket:REPO --save NAME` build a team for you.
+#
+# `delivery-analysis teams import config/teams.yaml --repo bitbucket:REPO` loads it;
+# `delivery-analysis teams export out.yaml` writes the active members back out.
+#
+# Schema:
+#   teams:
+#     - name: TeamDisplayName          # Excel sheet tab title (max 31 chars)
+#       team_banner: Title in row 1    # Optional banner for the GitHub workbook tab
+#       members:
+#         - name: Display Name
+#           emails: [a@b.example]      # Commit emails, lower-case; one person can have several
+#           user: github-login         # Optional, only used by the GitHub monthly workbook
+#
+# The people below are made up.
+
+teams:
+  - name: Example Team
+    team_banner: "Example Team Staff Metrics"
+    members:
+      - name: Ann Example
+        emails: [ann@corp.example, ann@partner.example]
+      - name: Bob Builder
+        emails: [bob@corp.example]
+      - name: Gus Hub
+        user: gus-hub
