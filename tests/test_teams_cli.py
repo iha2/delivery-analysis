@@ -107,3 +107,29 @@ def test_teams_appears_in_the_top_level_help(capsys):
     with pytest.raises(SystemExit):
         main(["--help"], environ={})
     assert "teams" in capsys.readouterr().out
+
+
+def test_import_then_export_round_trips_through_the_commands(home, capsys):
+    source = home / "teams.json"
+    source.write_text(
+        '{"teams": [{"name": "Core", "members": [{"name": "Ann Example", "emails": ["ann@corp.example"]}]}]}',
+        encoding="utf-8",
+    )
+    assert run(["teams", "import", str(source), "--repo", "bitbucket:r1"], home) == 0
+    assert "Team Core: 1 member(s) imported" in capsys.readouterr().out
+    assert count(home, "team_repo") == 1
+    out = home / "out.json"
+    assert run(["teams", "export", str(out), "--team", "Core"], home) == 0
+    assert "ann@corp.example" in out.read_text(encoding="utf-8")
+
+
+def test_a_bad_teams_file_exits_2_with_a_plain_message(home, capsys):
+    broken = home / "teams.json"
+    broken.write_text("{not json", encoding="utf-8")
+    assert run(["teams", "import", str(broken)], home) == 2
+    assert "not valid JSON" in capsys.readouterr().out
+
+
+def test_exporting_an_unknown_team_exits_2(home, capsys):
+    assert run(["teams", "export", str(home / "out.json"), "--team", "Nope"], home) == 2
+    assert "No team named 'Nope'" in capsys.readouterr().out

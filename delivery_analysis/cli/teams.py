@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import re
 import sqlite3
+from pathlib import Path
 from typing import Callable, List, Tuple
 
 from delivery_analysis.identity.merge import merge_identities
@@ -11,6 +12,7 @@ from delivery_analysis.store.db import connect, migrate
 from delivery_analysis.sync.runner import utc_now_iso
 from delivery_analysis.teams.discover import discover_people, window_start
 from delivery_analysis.teams.reconcile import create_team, reconcile_team
+from delivery_analysis.teams.yaml_io import export_teams, import_teams
 
 Repo = Tuple[str, str]
 
@@ -28,6 +30,17 @@ def register(commands) -> None:
     )
     discover.add_argument("--since", default="90d", help="Window, a number of days such as 90d (default 90d)")
     discover.add_argument("--save", metavar="NAME", help="Create a team with this name and load its roster")
+
+    importer = actions.add_parser("import", help="Load teams from a .json or .yaml file")
+    importer.add_argument("path")
+    importer.add_argument(
+        "--repo", action="append", metavar="SOURCE:REPO",
+        help="Repository the imported teams are kept up to date from (repeatable)",
+    )
+
+    exporter = actions.add_parser("export", help="Write active members to a .json or .yaml file")
+    exporter.add_argument("path")
+    exporter.add_argument("--team", help="Only this team")
 
 
 def parse_since(text: str) -> int:
@@ -84,6 +97,14 @@ def run(args: argparse.Namespace, settings: Settings, *, now: Callable[[], str] 
         migrate(conn)
         if args.teams_command == "discover":
             return _discover(conn, args, now())
+        if args.teams_command == "import":
+            repos = [parse_repo(text) for text in (args.repo or [])]
+            for line in import_teams(conn, Path(args.path), repos, now()):
+                print(line)
+            return 0
+        if args.teams_command == "export":
+            print(export_teams(conn, Path(args.path), args.team or ""))
+            return 0
         raise ValueError(f"Unknown teams action {args.teams_command!r}.")
     except ValueError as exc:
         print(str(exc))
