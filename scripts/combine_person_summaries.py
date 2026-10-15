@@ -40,7 +40,8 @@ DEFAULT_TEAMS_CONFIG = _REPO_ROOT / "config" / "teams.yaml"
 @dataclass(frozen=True)
 class TeamMember:
     name: str
-    user: str
+    user: str  # GitHub login; empty for members identified only by Bitbucket email
+    emails: tuple[str, ...] = ()  # Bitbucket commit emails, lower-case
 
 
 @dataclass(frozen=True)
@@ -140,11 +141,15 @@ def load_teams_config(path: Path | None) -> list[Team]:
                 raise SystemExit(f"teams[{i}].members[{j}] must be an object")
             staff = str(m.get("name") or "").strip()
             user = str(m.get("user") or "").strip()
-            if not staff or not user:
+            emails_raw = m.get("emails") or []
+            if not isinstance(emails_raw, list):
+                raise SystemExit(f"teams[{i}].members[{j}] emails must be a list in {path}")
+            emails = tuple(str(e).strip().lower() for e in emails_raw if str(e).strip())
+            if not staff or not (user or emails):
                 raise SystemExit(
-                    f"teams[{i}].members[{j}] needs both 'name' and 'user' in {path}"
+                    f"teams[{i}].members[{j}] needs a 'name' and either a 'user' or 'emails' in {path}"
                 )
-            members.append(TeamMember(name=staff, user=user))
+            members.append(TeamMember(name=staff, user=user, emails=emails))
         teams.append(Team(name=name, members=members, team_banner=team_banner))
     return teams
 
@@ -246,6 +251,8 @@ def _team_sheet_from_totals(
     headers = ["staff_name", *totals_headers]
     rows: list[list[str]] = []
     for member in team.members:
+        if not member.user.strip():
+            continue  # identified only by Bitbucket email: nothing to look up in GitHub totals
         src = by_login.get(member.user.strip().lower())
         if src is None:
             src = _empty_totals_row(totals_headers, member.user)
@@ -401,6 +408,8 @@ def combine_workbook(
 
     for team in teams or []:
         th, tr = _team_sheet_from_totals(totals_headers, totals_rows, team)
+        if not tr:
+            continue  # no member has a GitHub login, so there is no tab to build
         _write_bannered_sheet(
             workbook,
             team.name,
