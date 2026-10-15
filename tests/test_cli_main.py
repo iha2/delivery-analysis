@@ -81,3 +81,62 @@ def test_serve_binds_to_localhost_only(tmp_path, monkeypatch):
     assert captured["host"] == "127.0.0.1"
     assert captured["port"] == 8123
     assert opened == []
+
+
+# ---- final fix wave ----
+
+
+def test_default_env_path_is_the_repo_root_env():
+    from pathlib import Path
+
+    from delivery_analysis.cli.main import default_env_path
+
+    repo_root = Path(__file__).resolve().parents[1]
+    assert default_env_path() == repo_root / ".env"
+
+
+def test_doctor_prints_the_env_path_line(tmp_path, capsys):
+    env_file = tmp_path / ".env"
+    assert run(["doctor"], tmp_path, env_file=env_file) == 0
+    assert f".env: {env_file} (not found)" in capsys.readouterr().out
+    env_file.write_text("ANTHROPIC=x\n", encoding="utf-8")
+    assert run(["doctor"], tmp_path, env_file=env_file) == 0
+    assert f".env: {env_file} (found)" in capsys.readouterr().out
+
+
+def test_doctor_reports_connector_readiness_redacted(tmp_path, capsys, monkeypatch):
+    env = make_env(tmp_path, ATLASSIAN="tok-ABC-123")
+    ready = FakeConnector(name="good")
+    broken = FakeConnector(name="bad", problems=["rejected tok-ABC-123"])
+    monkeypatch.setattr(
+        "delivery_analysis.cli.main.build_connectors", lambda settings, environ: [ready, broken]
+    )
+    assert run(["doctor"], tmp_path, env) == 0
+    out = capsys.readouterr().out
+    assert "good: ready" in out
+    assert "bad: rejected ***" in out
+    assert "tok-ABC-123" not in out
+
+
+def _bad_env_file(tmp_path):
+    env_file = tmp_path / ".env"
+    env_file.write_bytes(b"ATLASSIAN=caf\xe9-hidden\r\n")
+    return env_file
+
+
+def test_doctor_with_an_unreadable_env_file_explains_and_returns_1(tmp_path, capsys):
+    env_file = _bad_env_file(tmp_path)
+    env = make_env(tmp_path, ANTHROPIC="from-environment")
+    assert run(["doctor"], tmp_path, env, env_file=env_file) == 1
+    captured = capsys.readouterr()
+    assert "not UTF-8 or UTF-16" in captured.err
+    assert "Traceback" not in captured.err and "hidden" not in captured.err
+    assert "ANTHROPIC: present" in captured.out
+
+
+def test_sync_with_an_unreadable_env_file_returns_2_without_running(tmp_path, capsys):
+    env_file = _bad_env_file(tmp_path)
+    fake = FakeConnector()
+    assert run(["sync"], tmp_path, connectors=[fake], env_file=env_file) == 2
+    assert "not UTF-8 or UTF-16" in capsys.readouterr().err
+    assert fake.calls == []

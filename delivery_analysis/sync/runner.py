@@ -5,7 +5,7 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Callable, Iterable, List, Optional, Sequence
+from typing import Callable, Iterable, List, Optional, Sequence, Tuple
 
 from delivery_analysis.connectors.base import Connector
 from delivery_analysis.model.records import Batch
@@ -110,6 +110,37 @@ def _record_failure(
     return SourceResult(connector_name, scope, "failed", total, message)
 
 
+def _safe_emit(log: Optional[Callable[[str], None]]) -> Callable[[str], None]:
+    """Wrap the log callback so a failing sink can never abort or fail a sync."""
+
+    def emit(message: str) -> None:
+        if log is None:
+            return
+        try:
+            log(message)
+        except Exception:
+            pass
+
+    return emit
+
+
+def _run_connector(
+    conn: sqlite3.Connection,
+    lock: threading.Lock,
+    connector: Connector,
+    scopes: Sequence[str],
+    overlap_days: int,
+    redact_values: Sequence[str],
+    now: Callable[[], str],
+    emit: Callable[[str], None],
+) -> List[SourceResult]:
+    """One worker per connector: its scopes run one after another, in order."""
+    return [
+        _run_job(conn, lock, connector, scope, overlap_days, redact_values, now, emit)
+        for scope in scopes
+    ]
+
+
 def run_sync(
     conn: sqlite3.Connection,
     connectors: Iterable[Connector],
@@ -120,29 +151,41 @@ def run_sync(
     now: Callable[[], str] = utc_now_iso,
     log: Optional[Callable[[str], None]] = None,
 ) -> List[SourceResult]:
-    """Sync every scope of every connector, one thread per scope, one writer at a time."""
-    emit = log or (lambda message: None)
+    """Sync every connector in its own thread (scopes in order), one writer at a time."""
+    emit = _safe_emit(log)
     lock = threading.Lock()
     failures: List[SourceResult] = []
-    jobs = []
+    jobs: List[Tuple[Connector, List[str]]] = []
     for connector in connectors:
         if only is not None and connector.name != only:
             continue
         try:
+            problems = connector.validate()
+            if problems:
+                raise RuntimeError("; ".join(problems))
             scopes = list(connector.scopes())
         except Exception as exc:
             failures.append(
                 _record_failure(conn, lock, connector.name, "*", 0, exc, redact_values, now, emit)
             )
             continue
-        jobs.extend((connector, scope) for scope in scopes)
+        try:
+            with lock:
+                sync_state.clear_state(conn, connector.name, "*")
+        except Exception:
+            pass
+        if scopes:
+            jobs.append((connector, scopes))
     if not jobs:
         return failures
     with ThreadPoolExecutor(max_workers=len(jobs)) as pool:
         futures = [
             pool.submit(
-                _run_job, conn, lock, connector, scope, overlap_days, redact_values, now, emit
+                _run_connector, conn, lock, connector, scopes, overlap_days, redact_values, now, emit
             )
-            for connector, scope in jobs
+            for connector, scopes in jobs
         ]
-        return failures + [future.result() for future in futures]
+        results = list(failures)
+        for future in futures:
+            results.extend(future.result())
+        return results

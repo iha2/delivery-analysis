@@ -49,7 +49,11 @@ class RawPayload:
 
 @dataclass
 class Batch:
-    """A unit of work from a connector. `cursor` is stored in the same transaction as the batch."""
+    """A unit of work from a connector. `cursor` is stored in the same transaction as the batch.
+
+    `cursor` must be a UTC ISO timestamp (`YYYY-MM-DDTHH:MM:SSZ`); the runner treats anything
+    else as "no usable cursor" and does a full sync.
+    """
 
     records: List[Record]
     raw: List[RawPayload] = field(default_factory=list)

@@ -138,6 +138,9 @@ def test_two_sources_writing_many_batches_at_once_lose_nothing(conn):
 class BrokenDiscovery:
     name = "broken"
 
+    def validate(self):
+        return []
+
     def scopes(self):
         raise RuntimeError("scope discovery down tok-9")
 
@@ -179,3 +182,124 @@ def test_failing_to_record_a_failure_does_not_discard_other_results(conn, monkey
     assert (results["failing"].status, results["failing"].error) == ("failed", "source down")
     assert results["healthy"].status == "ok"
     assert rows(conn) == ["5"]
+
+
+# ---- final fix wave ----
+
+
+def test_validation_problems_fail_that_connector_only(conn):
+    broken = FakeConnector(name="broken", problems=["token missing"])
+    healthy = FakeConnector(name="healthy", batches={"main": [Batch([rec(5, "healthy")], cursor="h1")]})
+    results = runner.run_sync(conn, [broken, healthy], now=CLOCK)
+    assert [(r.connector, r.scope, r.status, r.records, r.error) for r in results] == [
+        ("broken", "*", "failed", 0, "token missing"),
+        ("healthy", "main", "ok", 1, None),
+    ]
+    assert broken.calls == []
+    state = [s for s in ss.list_sync_states(conn) if s["connector"] == "broken"][0]
+    assert (state["scope"], state["stale"]) == ("*", True)
+
+
+def test_validate_that_raises_fails_that_connector_only(conn):
+    class Raising(FakeConnector):
+        def validate(self):
+            raise RuntimeError("cannot check")
+
+        def scopes(self):
+            raise AssertionError("scopes must not be called")
+
+    healthy = FakeConnector(name="healthy", batches={"main": [Batch([rec(5, "healthy")])]})
+    results = runner.run_sync(conn, [Raising(name="raising"), healthy], now=CLOCK)
+    assert [(r.connector, r.scope, r.status, r.error) for r in results] == [
+        ("raising", "*", "failed", "cannot check"),
+        ("healthy", "main", "ok", None),
+    ]
+
+
+def test_validation_problem_text_is_redacted(conn):
+    broken = FakeConnector(name="broken", problems=["bad tok-SECRET-1", "other"])
+    results = runner.run_sync(conn, [broken], redact_values=["tok-SECRET-1"], now=CLOCK)
+    assert results[0].error == "bad ***; other"
+    state = ss.list_sync_states(conn)[0]
+    assert "tok-SECRET-1" not in state["error"]
+
+
+def test_validation_respects_only(conn):
+    class Boom(FakeConnector):
+        def validate(self):
+            raise AssertionError("must not be validated")
+
+    other = Boom(name="other")
+    wanted = FakeConnector(name="wanted", batches={"main": [Batch([rec(1, "wanted")])]})
+    results = runner.run_sync(conn, [other, wanted], only="wanted", now=CLOCK)
+    assert [(r.connector, r.status) for r in results] == [("wanted", "ok")]
+
+
+def test_successful_discovery_clears_a_stale_star_row(conn):
+    class Switchable(FakeConnector):
+        fail = True
+
+        def scopes(self):
+            if self.fail:
+                raise RuntimeError("discovery down")
+            return super().scopes()
+
+    src = Switchable(name="src", batches={"ok": [Batch([rec(1, "src")])]})
+    first = runner.run_sync(conn, [src], now=CLOCK)
+    assert [(r.scope, r.status) for r in first] == [("*", "failed")]
+    src.fail = False
+    second = runner.run_sync(conn, [src], now=CLOCK)
+    assert [(r.scope, r.status) for r in second] == [("ok", "ok")]
+    states = ss.list_sync_states(conn)
+    assert [(s["scope"], s["status"]) for s in states] == [("ok", "ok")]
+
+
+def test_clear_state_deletes_one_row(conn):
+    ss.save_state(conn, "c", "*", status="failed", error="x", records=0, now=CLOCK())
+    ss.save_state(conn, "c", "s", status="ok", error=None, records=1, now=CLOCK())
+    ss.clear_state(conn, "c", "*")
+    assert [s["scope"] for s in ss.list_sync_states(conn)] == ["s"]
+
+
+def test_one_thread_per_connector_runs_its_scopes_in_order(conn):
+    import threading
+
+    class Recording(FakeConnector):
+        def __init__(self, *a, **k):
+            super().__init__(*a, **k)
+            self.threads = []
+
+        def sync(self, scope, since):
+            self.threads.append((scope, threading.get_ident()))
+            return super().sync(scope, since)
+
+    batches = {s: [Batch([rec(i, "multi")])] for i, s in enumerate(["a", "b", "c"], start=1)}
+    multi = Recording(name="multi", batches=batches)
+    results = runner.run_sync(conn, [multi], now=CLOCK)
+    assert [(r.scope, r.status) for r in results] == [("a", "ok"), ("b", "ok"), ("c", "ok")]
+    assert [scope for scope, _ in multi.threads] == ["a", "b", "c"]
+    assert len({ident for _, ident in multi.threads}) == 1
+
+
+def test_results_are_failures_first_then_connector_then_scope_order(conn):
+    first = FakeConnector(name="first", batches={"a": [], "b": []})
+    broken = FakeConnector(name="broken", problems=["nope"])
+    second = FakeConnector(name="second", batches={"x": []})
+    results = runner.run_sync(conn, [first, broken, second], now=CLOCK)
+    assert [(r.connector, r.scope) for r in results] == [
+        ("broken", "*"),
+        ("first", "a"),
+        ("first", "b"),
+        ("second", "x"),
+    ]
+
+
+def test_a_failing_log_callback_never_breaks_the_run(conn):
+    def bad_log(message):
+        raise RuntimeError("log sink down")
+
+    fake = FakeConnector(batches={"main": [Batch([rec(1)], cursor="c1")]})
+    broken = FakeConnector(name="broken", problems=["nope"])
+    results = runner.run_sync(conn, [broken, fake], now=CLOCK, log=bad_log)
+    assert [(r.connector, r.status) for r in results] == [("broken", "failed"), ("fake", "ok")]
+    assert rows(conn) == ["1"]

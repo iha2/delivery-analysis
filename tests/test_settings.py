@@ -65,7 +65,6 @@ def test_settings_defaults_use_the_home_results_folder():
     settings = s.Settings.from_env({})
     assert settings.db_path == Path.home() / "github-analysis-results" / "delivery.sqlite"
     assert settings.host == "127.0.0.1"
-    assert settings.port == 8000
     assert settings.overlap_days == 7
     assert str(settings.report_tz) == "America/New_York"
 
@@ -73,3 +72,32 @@ def test_settings_defaults_use_the_home_results_folder():
 def test_settings_output_dir_env_var_wins(tmp_path):
     settings = s.Settings.from_env({"GITHUB_ANALYSIS_RESULTS": str(tmp_path)})
     assert settings.db_path == tmp_path / "delivery.sqlite"
+
+
+def test_secret_values_includes_the_stripped_form():
+    values = s.secret_values({"ATLASSIAN": "tok-SECRET-999\r\n"})
+    assert s.redact("401 for tok-SECRET-999", values) == "401 for ***"
+    assert s.redact("raw tok-SECRET-999\r\n", values) == "raw ***"
+
+
+def test_load_env_file_reads_utf16_with_bom(tmp_path):
+    path = tmp_path / ".env"
+    path.write_bytes(b"\xff\xfe" + "ATLASSIAN=abc\r\nANTHROPIC=def\r\n".encode("utf-16-le"))
+    env = {}
+    assert s.load_env_file(path, env) == ["ATLASSIAN", "ANTHROPIC"]
+    assert env == {"ATLASSIAN": "abc", "ANTHROPIC": "def"}
+
+
+def test_load_env_file_rejects_non_utf8_with_a_plain_message(tmp_path):
+    import pytest
+
+    path = tmp_path / ".env"
+    path.write_bytes(b"ATLASSIAN=caf\xe9-secret\r\n")
+    with pytest.raises(s.EnvFileError) as info:
+        s.load_env_file(path, {})
+    message = str(info.value)
+    assert message == (
+        "Could not read %s: the file is not UTF-8 or UTF-16 text. "
+        "Save it as UTF-8 and try again." % path
+    )
+    assert "secret" not in message

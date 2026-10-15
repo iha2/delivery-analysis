@@ -33,6 +33,22 @@ def parse_env_text(text: str) -> Dict[str, str]:
     return values
 
 
+class EnvFileError(ValueError):
+    """The .env file exists but cannot be decoded. The message never contains file contents."""
+
+
+def _decode_env_bytes(data: bytes, path: Path) -> str:
+    try:
+        if data.startswith(b"\xff\xfe") or data.startswith(b"\xfe\xff"):
+            return data.decode("utf-16")
+        return data.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        raise EnvFileError(
+            "Could not read %s: the file is not UTF-8 or UTF-16 text. "
+            "Save it as UTF-8 and try again." % path
+        ) from None
+
+
 def load_env_file(path: Path, environ: Optional[Dict[str, str]] = None) -> List[str]:
     """Load a .env file into environ without overriding variables already set.
 
@@ -42,7 +58,7 @@ def load_env_file(path: Path, environ: Optional[Dict[str, str]] = None) -> List[
     if not path.is_file():
         return []
     loaded: List[str] = []
-    for name, value in parse_env_text(path.read_text(encoding="utf-8-sig")).items():
+    for name, value in parse_env_text(_decode_env_bytes(path.read_bytes(), path)).items():
         if name not in target:
             target[name] = value
             loaded.append(name)
@@ -79,7 +95,15 @@ def secret_values(
     names: Iterable[str] = CREDENTIAL_VARS,
 ) -> List[str]:
     env = os.environ if environ is None else environ
-    return [env[name] for name in names if (env.get(name) or "").strip()]
+    found: List[str] = []
+    for name in names:
+        raw = env.get(name) or ""
+        if not raw.strip():
+            continue
+        for value in (raw, raw.strip()):
+            if value not in found:
+                found.append(value)
+    return found
 
 
 def redact(text: str, secrets: Iterable[str]) -> str:
@@ -95,7 +119,6 @@ class Settings:
     report_tz: ZoneInfo = ZoneInfo("America/New_York")
     overlap_days: int = 7
     host: str = "127.0.0.1"
-    port: int = 8000
 
     @classmethod
     def from_env(cls, environ: Optional[Mapping[str, str]] = None) -> "Settings":

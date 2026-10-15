@@ -41,6 +41,11 @@ def save_state(
     )
 
 
+def clear_state(conn: sqlite3.Connection, connector: str, scope: str) -> None:
+    """Delete one health row. Does not manage the transaction."""
+    conn.execute("DELETE FROM sync_state WHERE connector = ? AND scope = ?", (connector, scope))
+
+
 def list_sync_states(conn: sqlite3.Connection) -> List[Dict[str, Any]]:
     rows = conn.execute(
         "SELECT connector, scope, cursor, last_run, status, error, records "

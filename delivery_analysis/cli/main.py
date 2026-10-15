@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import sys
 import threading
 import webbrowser
 from pathlib import Path
@@ -15,9 +16,11 @@ from delivery_analysis.connectors.base import Connector
 from delivery_analysis.connectors.registry import build_connectors
 from delivery_analysis.settings import (
     CREDENTIAL_VARS,
+    EnvFileError,
     Settings,
     credential_status,
     load_env_file,
+    redact,
     secret_values,
 )
 from delivery_analysis.store.db import connect, migrate
@@ -88,9 +91,29 @@ def _sync(
     return 1 if any(result.status == "failed" for result in results) else 0
 
 
-def _doctor(settings: Settings, environ: Dict[str, str]) -> int:
+def default_env_path() -> Path:
+    """The repo's .env when running from a checkout, otherwise `.env` in the current folder."""
+    root = Path(__file__).resolve().parents[2]
+    if (root / "pyproject.toml").is_file():
+        return root / ".env"
+    return Path.cwd() / ".env"
+
+
+def _doctor(
+    settings: Settings, environ: Dict[str, str], env_path: Path, connectors: Optional[List[Connector]]
+) -> int:
+    print(f".env: {env_path} ({'found' if env_path.is_file() else 'not found'})")
     for name, present in credential_status(environ, CREDENTIAL_VARS).items():
         print(f"{name}: {'present' if present else 'missing'}")
+    secrets = secret_values(environ)
+    active = connectors if connectors is not None else build_connectors(settings, environ)
+    for connector in active:
+        try:
+            problems = connector.validate()
+            status = "; ".join(problems) if problems else "ready"
+        except Exception as exc:
+            status = str(exc) or exc.__class__.__name__
+        print(f"{connector.name}: {redact(status, secrets)}")
     print(f"Database: {settings.db_path}")
     return 0
 
@@ -98,19 +121,28 @@ def _doctor(settings: Settings, environ: Dict[str, str]) -> int:
 def main(
     argv: Optional[List[str]] = None,
     *,
-    env_path: Path = Path(".env"),
+    env_path: Optional[Path] = None,
     environ: Optional[Dict[str, str]] = None,
     connectors: Optional[List[Connector]] = None,
 ) -> int:
     args = build_parser().parse_args(argv)
     env = os.environ if environ is None else environ
-    load_env_file(env_path, env)
+    path = default_env_path() if env_path is None else env_path
+    env_error = False
+    try:
+        load_env_file(path, env)
+    except EnvFileError as exc:
+        print(str(exc), file=sys.stderr)
+        if args.command != "doctor":
+            return 2
+        env_error = True
     settings = Settings.from_env(env)
     if args.command == "serve":
         return _serve(args, settings)
     if args.command == "sync":
         return _sync(args, settings, env, connectors)
-    return _doctor(settings, env)
+    code = _doctor(settings, env, path, connectors)
+    return 1 if env_error else code
 
 
 if __name__ == "__main__":
