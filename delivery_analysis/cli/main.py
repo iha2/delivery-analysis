@@ -28,8 +28,7 @@ from delivery_analysis.store.db import connect, migrate
 from delivery_analysis.store.repo_selection import detail_progress
 from delivery_analysis.cli import repos as repos_cli
 from delivery_analysis.cli import teams as teams_cli
-from delivery_analysis.sync.runner import run_sync, utc_now_iso
-from delivery_analysis.teams.reconcile import reconcile_all, stale_repo_keys
+from delivery_analysis.sync.service import sync_and_reconcile
 from github_analysis.cli.commands import COMMAND_REGISTRARS
 
 NO_CONNECTORS_MESSAGE = (
@@ -77,8 +76,8 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _serve(args: argparse.Namespace, settings: Settings) -> int:
-    app = create_app(settings.db_path)
+def _serve(args: argparse.Namespace, settings: Settings, environ: Dict[str, str]) -> int:
+    app = create_app(settings.db_path, settings=settings, environ=environ)
     url = f"http://{settings.host}:{args.port}"
     if not args.no_browser:
         threading.Timer(1.0, webbrowser.open, args=[url]).start()
@@ -105,14 +104,8 @@ def _sync(
     conn = connect(settings.db_path)
     try:
         migrate(conn)
-        secrets = secret_values(environ)
-        results = run_sync(
-            conn,
-            active,
-            overlap_days=settings.overlap_days,
-            only=args.source,
-            redact_values=secrets,
-            log=print,
+        results, lines, failed_teams = sync_and_reconcile(
+            conn, active, settings, environ, only=args.source, log=print
         )
         if not results:
             print(
@@ -123,20 +116,8 @@ def _sync(
             if result.connector == "bitbucket" and result.status == "ok":
                 done, total = detail_progress(conn, result.scope)
                 print(f"  pull request detail: {done} of {total}")
-        failed_teams = 0
-        try:
-            lines, failed_teams = reconcile_all(
-                conn,
-                utc_now_iso(),
-                stale_repo_keys(conn),
-                {args.source} if args.source else None,
-                lambda text: redact(text, secrets),
-            )
-            for line in lines:
-                print(line)
-        except Exception as exc:
-            failed_teams = 1
-            print("Team update failed: " + redact(str(exc) or exc.__class__.__name__, secrets))
+        for line in lines:
+            print(line)
     finally:
         conn.close()
     failed_sources = any(result.status == "failed" for result in results)
@@ -207,7 +188,7 @@ def main(
     if args.command == "repos":
         return repos_cli.run(args, settings, env, transport=transport)
     if args.command == "serve":
-        return _serve(args, settings)
+        return _serve(args, settings, env)
     if args.command == "sync":
         return _sync(args, settings, env, connectors, transport)
     code = _doctor(settings, env, path, connectors, transport)

@@ -113,3 +113,10 @@ def test_bitbucket_is_a_known_credential_and_gets_redacted():
     assert "BITBUCKET" in s.CREDENTIAL_VARS
     assert s.secret_values({"BITBUCKET": "tok-bb-1"}) == ["tok-bb-1"]
     assert s.credential_status({"BITBUCKET": "x"})["BITBUCKET"] is True
+
+
+def test_refresh_after_minutes_defaults_and_ignores_bad_values():
+    assert s.Settings.from_env({}).refresh_after_minutes == 60
+    assert s.Settings.from_env({"REFRESH_AFTER_MINUTES": "15"}).refresh_after_minutes == 15
+    assert s.Settings.from_env({"REFRESH_AFTER_MINUTES": "soon"}).refresh_after_minutes == 60
+    assert s.Settings.from_env({"REFRESH_AFTER_MINUTES": "-5"}).refresh_after_minutes == 60

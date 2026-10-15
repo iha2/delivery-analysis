@@ -113,6 +113,14 @@ def redact(text: str, secrets: Iterable[str]) -> str:
     return text
 
 
+def _int_env(env: Mapping[str, str], name: str, default: int) -> int:
+    try:
+        value = int((env.get(name) or "").strip())
+    except ValueError:
+        return default
+    return value if value > 0 else default
+
+
 @dataclass(frozen=True)
 class Settings:
     db_path: Path
@@ -121,6 +129,7 @@ class Settings:
     host: str = "127.0.0.1"
     window_days: int = 90
     bitbucket_workspace: str = ""
+    refresh_after_minutes: int = 60
 
     @classmethod
     def from_env(cls, environ: Optional[Mapping[str, str]] = None) -> "Settings":
@@ -130,4 +139,5 @@ class Settings:
         return cls(
             db_path=base / DB_FILE_NAME,
             bitbucket_workspace=(env.get("BITBUCKET_WORKSPACE") or "").strip(),
+            refresh_after_minutes=_int_env(env, "REFRESH_AFTER_MINUTES", 60),
         )
