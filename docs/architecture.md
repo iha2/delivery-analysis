@@ -8,26 +8,28 @@ github-analysis/
 ├── run_monthly_report.sh
 ├── github_pr_timeline_report.py   # legacy → analyze
 ├── export_report_xlsx.py          # legacy → export
-└── github_analysis/
-    ├── config.py                  # timezone, default org, API limits
-    ├── models.py                  # ReportConfig, PullRequestRow, UserSummary
-    ├── repo.py                    # parse --repo
-    ├── time_utils.py              # date windows, timestamps
-    ├── cli/commands/              # analyze, export, run
-    ├── github/                    # GhClient, preflight, pulls
-    ├── catalog/search.py          # Phase 1 PR discovery
-    ├── analysis/                  # pr_builder, reviews, summaries
-    ├── cache/raw_store.py         # _raw.json read/write
-    ├── export/                    # paths, tsv, xlsx
-    └── pipeline/runner.py         # run_report() orchestration
+├── github_analysis/               # compatibility shims (old import paths)
+└── delivery_analysis/
+    ├── core/time_utils.py         # date windows, timestamps
+    └── connectors/github/
+        ├── config.py              # timezone, default org, API limits
+        ├── models.py              # ReportConfig, PullRequestRow, UserSummary
+        ├── repo.py                # parse --repo
+        ├── client.py, preflight.py, pulls.py  # GhClient, preflight, pulls
+        ├── search.py              # Phase 1 PR discovery
+        ├── pr_builder.py, reviews.py, summaries.py, authored_activity.py  # analysis
+        ├── raw_store.py           # _raw.json read/write
+        └── runner.py              # run_report() orchestration
 ```
+
+The old `github_analysis` paths are compatibility shims that alias to these modules; CLI commands, export, and logging still live under `github_analysis/`.
 
 ## Data flow
 
 ```
 CLI command
-  → pipeline/runner.py     (discover PRs, fetch details, summarize)
-  → analysis/              (per-PR and per-person metrics)
+  → connectors/github/runner.py   (discover PRs, fetch details, summarize)
+  → connectors/github/ analysis modules (per-PR and per-person metrics)
   → export/                (TSV and/or Excel)
 ```
 
@@ -35,12 +37,12 @@ CLI command
 
 | Phase | Module | What happens |
 |-------|--------|----------------|
-| Preflight | `github/preflight.py` | `gh auth status`, repo access check |
-| Phase 1 | `catalog/search.py` | GitHub search → PR number catalog |
-| Phase 2 | `analysis/pr_builder.py` | Fetch PR detail (parallel via `--workers`) |
-| Phase 3 | `analysis/reviews.py`, `summaries.py` | Review counts, person rollups |
-| Phase 3b | `analysis/authored_activity.py` | Open-at-window-end snapshot |
-| Write | `export/`, `cache/raw_store.py` | TSV, `_raw.json`, Excel |
+| Preflight | `connectors/github/preflight.py` | `gh auth status`, repo access check |
+| Phase 1 | `connectors/github/search.py` | GitHub search → PR number catalog |
+| Phase 2 | `connectors/github/pr_builder.py` | Fetch PR detail (parallel via `--workers`) |
+| Phase 3 | `connectors/github/reviews.py`, `summaries.py` | Review counts, person rollups |
+| Phase 3b | `connectors/github/authored_activity.py` | Open-at-window-end snapshot |
+| Write | `github_analysis/export/`, `connectors/github/raw_store.py` | TSV, `_raw.json`, Excel |
 
 ## Phase 2 — REST calls per PR
 
@@ -55,11 +57,11 @@ Each PR triggers about six `gh api` calls:
 | Reviews | `GET /pulls/{n}/reviews` |
 | Comments | `GET /issues/{n}/comments` |
 
-Phase 2 uses `ThreadPoolExecutor` in `pipeline/runner.py`. Each worker gets its own `GhClient`. Results are merged and sorted by PR number after the pool finishes.
+Phase 2 uses `ThreadPoolExecutor` in `connectors/github/runner.py`. Each worker gets its own `GhClient`. Results are merged and sorted by PR number after the pool finishes.
 
 ## Catalog search
 
-`catalog/search.py` builds Phase 1 queries with GitHub **calendar date ranges**:
+`connectors/github/search.py` builds Phase 1 queries with GitHub **calendar date ranges**:
 
 ```
 merged:2026-05-01..2026-05-31
@@ -67,7 +69,7 @@ merged:2026-05-01..2026-05-31
 
 Ranges align with `--start-date` and the day before `--end-date`. ISO timestamp qualifiers (`merged:>=2026-05-01T04:00:00Z`) are unreliable in GitHub search and must not be used.
 
-## Configuration (`config.py`)
+## Configuration (`connectors/github/config.py`)
 
 | Setting | Default | Purpose |
 |---------|---------|---------|

@@ -133,7 +133,7 @@ Always state expected **wait time (~15–30 minutes)** once before a full fetch.
 | Pipeline / phases | [docs/architecture.md](docs/architecture.md) |
 | Combined workbook / team tabs | `scripts/combine_person_summaries.py` |
 | Agency rosters | `config/teams.yaml` (not Python) |
-| Defaults (org, output dir) | `github_analysis/config.py` |
+| Defaults (org, output dir) | `delivery_analysis/connectors/github/config.py` (`github_analysis/config.py` is a compatibility shim) |
 
 After changing CLI, columns, teams config schema, or monthly workflow: **update README.md first**, then adjust this file only if agent behavior changes.
 
