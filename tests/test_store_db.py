@@ -8,6 +8,7 @@ EXPECTED_TABLES = {
     "person", "identity", "repository", "change_request", "change_event", "vcs_commit",
     "work_item", "work_item_transition", "document", "document_version", "link",
     "property", "token_usage", "token_attribution", "raw_payload", "sync_state",
+    "team", "team_repo", "team_member", "possible_duplicate",
     "schema_version",
 }
 
@@ -28,9 +29,9 @@ def test_connect_creates_a_missing_folder_and_uses_wal(tmp_path):
 def test_migrate_creates_every_table_and_is_idempotent(tmp_path):
     conn = db.connect(tmp_path / "d.sqlite")
     assert db.current_version(conn) == 0
-    assert db.migrate(conn) == 1
+    assert db.migrate(conn) == 2
     assert EXPECTED_TABLES <= table_names(conn)
-    assert db.migrate(conn) == 1
+    assert db.migrate(conn) == 2
     conn.close()
 
 
