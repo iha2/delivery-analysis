@@ -903,3 +903,15 @@ The database is `delivery.sqlite` in the output folder (`GITHUB_ANALYSIS_RESULTS
 | `uv run delivery-analysis teams export FILE [--team NAME]` | Write active members to a `.json` or `.yaml` file |
 
 After `delivery-analysis sync`, every team is updated: new committers are added, people with no commit in the window become inactive (never deleted), and your edits are kept. A failed sync never marks anyone inactive. `config/teams.yaml` is a local, git-ignored file; see `config/teams.example.yaml`.
+
+### Bitbucket sync
+
+`delivery-analysis` can sync commits, pull requests, and review activity from Bitbucket Cloud into the local database.
+
+1. Create an Atlassian API token with `read:repository:bitbucket` and `read:pullrequest:bitbucket` and put it in `.env` as `BITBUCKET`. Optionally set `BITBUCKET_WORKSPACE` so you can use bare repo names (see `.env.example`).
+2. Select a repository (this checks access first): `uv run delivery-analysis repos add bitbucket:keyhealthtech/movedocs_v1.0`
+3. Sync: `uv run delivery-analysis sync --source bitbucket`
+4. See status and detail progress: `uv run delivery-analysis repos list`
+5. Build a team from the commits: `uv run delivery-analysis teams discover --repo bitbucket:movedocs_v1.0 --save MoveDocs`
+
+The first sync covers the last 90 days. Pull request detail (merge time, review comments and approvals, file counts) is fetched in budgeted batches, newest first, so large repositories fill in over several syncs without hitting Bitbucket's rate limit. `repos list` shows how far detail has got. Assigned reviewers and whether each has approved are stored on every pull request.
