@@ -75,3 +75,52 @@ def test_a_failed_source_does_not_retire_anyone(tmp_path, capsys):
     assert run_sync(tmp_path, failing) == 1
     assert roster(tmp_path) == {"Ann Example": "active", "Bob Builder": "active"}
     assert "stale" in capsys.readouterr().out
+
+
+def test_a_sync_limited_to_another_source_leaves_the_team_alone(tmp_path):
+    prepare(tmp_path)
+    connection = db.connect(tmp_path / "delivery.sqlite")
+    upsert_record(connection, commit(2, "bob@corp.example", "Bob Builder", stamp(1)), stamp(0))
+    connection.close()
+    other = FakeConnector(name="other", batches={"main": [Batch([])]})
+    fake = FakeConnector(batches={"main": [Batch([])]})
+    code = main(
+        ["sync", "--source", "other"],
+        env_path=tmp_path / "missing.env",
+        environ={"GITHUB_ANALYSIS_RESULTS": str(tmp_path)},
+        connectors=[other, fake],
+    )
+    assert code == 0
+    assert roster(tmp_path) == {"Ann Example": "active"}
+
+
+def test_a_connector_level_failure_does_not_retire_anyone(tmp_path):
+    prepare(tmp_path)
+    connection = db.connect(tmp_path / "delivery.sqlite")
+    upsert_record(connection, commit(2, "bob@corp.example", "Bob Builder", stamp(1)), stamp(0))
+    connection.close()
+    broken = FakeConnector(problems=["token missing"])
+    assert run_sync(tmp_path, broken) == 1
+    assert roster(tmp_path) == {"Ann Example": "active", "Bob Builder": "active"}
+
+
+def test_a_failing_team_makes_the_sync_exit_1_and_names_the_team(tmp_path, capsys, monkeypatch):
+    import delivery_analysis.teams.reconcile as reconcile_module
+
+    prepare(tmp_path)
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("cannot reach tok-SECRET-999")
+
+    monkeypatch.setattr(reconcile_module, "reconcile_team", boom)
+    batch = Batch([commit(2, "bob@corp.example", "Bob Builder", stamp(1))], cursor=stamp(0))
+    code = main(
+        ["sync"],
+        env_path=tmp_path / "missing.env",
+        environ={"GITHUB_ANALYSIS_RESULTS": str(tmp_path), "ATLASSIAN": "tok-SECRET-999"},
+        connectors=[FakeConnector(batches={"main": [batch]})],
+    )
+    out = capsys.readouterr().out
+    assert code == 1
+    assert "Team Core: FAILED" in out
+    assert "tok-SECRET-999" not in out

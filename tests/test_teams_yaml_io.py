@@ -111,3 +111,21 @@ def test_yaml_round_trip(conn, tmp_path, make_id):
     out = tmp_path / "out.yaml"
     export_teams(conn, out)
     assert "ann@corp.example" in out.read_text(encoding="utf-8")
+
+
+def test_importing_a_listed_name_renames_an_existing_person_and_pins_the_name(conn, tmp_path, make_id):
+    conn.execute("INSERT INTO person (person_id, display_name, manual) VALUES ('p1', 'Ann Example', 0)")
+    conn.execute("INSERT INTO identity (source, account_id, person_id) VALUES ('email', 'ann@corp.example', 'p1')")
+    payload = {"teams": [{"name": "Core", "members": [{"name": "Annie Renamed", "emails": ["ann@corp.example"]}]}]}
+    import_teams(conn, write_json(tmp_path, payload), [], NOW, make_id)
+    person = conn.execute("SELECT display_name, manual FROM person").fetchone()
+    assert (person["display_name"], person["manual"]) == ("Annie Renamed", 1)
+
+
+def test_members_with_only_a_github_login_are_pinned(conn, tmp_path, make_id):
+    import_teams(conn, write_json(tmp_path, PAYLOAD), [], NOW, make_id)
+    rows = conn.execute(
+        "SELECT p.display_name AS name, m.pinned AS pinned FROM team_member m "
+        "JOIN person p ON p.person_id = m.person_id"
+    ).fetchall()
+    assert {row["name"]: row["pinned"] for row in rows} == {"Ann Example": 0, "Gus Hub": 1}

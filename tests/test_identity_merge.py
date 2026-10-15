@@ -23,10 +23,10 @@ def test_one_person_with_two_domains_is_merged():
 
 def test_machine_name_email_joins_the_full_name():
     people, _ = merge_identities(
-        [act("akhan@host-641", {"akhan": 4}), act("akhan@corp.example", {"Abdul Rauf Khan": 7})]
+        [act("rvoss@host-17.example", {"rvoss": 4}), act("rvoss@corp.example", {"Rae Ann Voss": 7})]
     )
     assert [(p.display_name, p.emails) for p in people] == [
-        ("Abdul Rauf Khan", ("akhan@corp.example", "akhan@host-641"))
+        ("Rae Ann Voss", ("rvoss@corp.example", "rvoss@host-17.example"))
     ]
 
 
@@ -40,10 +40,10 @@ def test_two_different_people_sharing_a_first_name_are_not_merged():
 
 
 def test_display_name_prefers_the_most_common_spelling_with_a_space():
-    people, _ = merge_identities([act("a@x.example", {"Alex Poe": 381, "Alexander Poe": 323, "apoe": 900})])
-    assert people[0].display_name == "Alex Poe"
-    people, _ = merge_identities([act("j@x.example", {"JRoe": 196, "Jane Roe": 194})])
-    assert people[0].display_name == "Jane Roe"
+    people, _ = merge_identities([act("a@x.example", {"Kim Rowe": 381, "Kimberly Rowe": 323, "krowe": 900})])
+    assert people[0].display_name == "Kim Rowe"
+    people, _ = merge_identities([act("j@x.example", {"QTarlow": 196, "Quinn Tarlow": 194})])
+    assert people[0].display_name == "Quinn Tarlow"
 
 
 def test_display_name_falls_back_to_the_email_when_no_name_was_recorded():
@@ -90,3 +90,37 @@ def test_result_does_not_depend_on_input_order():
         act("zed@x.example", {"Zed Q": 1}),
     ]
     assert merge_identities(items) == merge_identities(list(reversed(items)))
+
+
+def test_a_shared_initial_and_surname_is_not_enough_to_merge():
+    people, dupes = merge_identities(
+        [act("jsmith@a.example", {"John Smith": 3}), act("jsmith@b.example", {"Jane Smith": 3})]
+    )
+    assert len(people) == 2
+    assert [(d.email_a, d.email_b) for d in dupes] == [("jsmith@a.example", "jsmith@b.example")]
+
+
+def test_middle_names_that_differ_are_not_merged():
+    people, dupes = merge_identities(
+        [act("mlee@a.example", {"Mary Ann Lee": 3}), act("mlee@b.example", {"Mary Beth Lee": 3})]
+    )
+    assert len(people) == 2 and len(dupes) == 1
+
+
+def test_a_pinned_split_is_never_merged_back():
+    pinned = {"ann@corp.example": "pA", "ann@partner.example": "pB"}
+    people, dupes = merge_identities(
+        [act("ann@corp.example", {"Ann Example": 3}), act("ann@partner.example", {"Ann Example": 2})],
+        pinned,
+    )
+    assert [p.emails for p in people] == [("ann@corp.example",), ("ann@partner.example",)]
+    assert dupes == []
+
+
+def test_pinning_the_same_owner_still_merges():
+    pinned = {"ann@corp.example": "pA", "ann@partner.example": "pA"}
+    people, _ = merge_identities(
+        [act("ann@corp.example", {"Ann Example": 3}), act("ann@partner.example", {"Ann Example": 2})],
+        pinned,
+    )
+    assert len(people) == 1

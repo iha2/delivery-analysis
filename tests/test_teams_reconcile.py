@@ -1,5 +1,6 @@
 import pytest
 
+import delivery_analysis.teams.reconcile as reconcile_module
 from delivery_analysis.teams.reconcile import create_team, reconcile_all, reconcile_team
 
 NOW = "2026-10-15T00:00:00Z"
@@ -164,5 +165,114 @@ def test_reconcile_all_returns_one_summary_per_team(conn, add_commit, team, make
     seed_core(add_commit)
     other = create_team(conn, "Other", [("bitbucket", "r9")], 90, now=NOW, make_id=make_id)
     assert other
-    lines = reconcile_all(conn, NOW)
+    lines, failed = reconcile_all(conn, NOW)
+    assert failed == 0
     assert [line.split(":")[0] for line in lines] == ["Team Core", "Team Other"]
+
+
+def test_a_manual_split_is_replayed_and_both_people_stay_on_the_roster(conn, add_commit, team, make_id):
+    conn.execute("INSERT INTO person (person_id, display_name, manual) VALUES ('pA', 'Ann Corp', 0)")
+    conn.execute("INSERT INTO person (person_id, display_name, manual) VALUES ('pB', 'Ann Partner', 0)")
+    conn.execute(
+        "INSERT INTO identity (source, account_id, person_id, manual) VALUES ('email', 'ann@corp.example', 'pA', 1)"
+    )
+    conn.execute(
+        "INSERT INTO identity (source, account_id, person_id, manual) VALUES ('email', 'ann@partner.example', 'pB', 1)"
+    )
+    add_commit("ann@corp.example", "Ann Example", "2026-09-01")
+    add_commit("ann@partner.example", "Ann Example", "2026-09-02")
+    reconcile_team(conn, team, NOW, make_id=make_id)
+    members = {row["person_id"] for row in conn.execute("SELECT person_id FROM team_member WHERE team_id = ?", (team,))}
+    assert members == {"pA", "pB"}
+    assert conn.execute("SELECT COUNT(*) AS n FROM person").fetchone()["n"] == 2
+
+
+def test_two_stored_people_that_merge_become_one_member_with_the_better_status(conn, add_commit, team, make_id):
+    other = create_team(conn, "Other", REPOS, 90, now=NOW, make_id=make_id)
+    for person_id, email in (("p1", "pat@corp.example"), ("p2", "pat@partner.example")):
+        conn.execute("INSERT INTO person (person_id, display_name) VALUES (?, 'Pat Lee')", (person_id,))
+        conn.execute(
+            "INSERT INTO identity (source, account_id, person_id) VALUES ('email', ?, ?)", (email, person_id)
+        )
+    conn.execute(
+        "INSERT INTO team_member (team_id, person_id, status, first_seen, last_commit) "
+        "VALUES (?, 'p1', 'active', '2026-01-01', '2026-02-01T00:00:00Z')",
+        (team,),
+    )
+    conn.execute(
+        "INSERT INTO team_member (team_id, person_id, status, first_seen, last_commit) "
+        "VALUES (?, 'p2', 'inactive', '2025-12-01', '2026-03-01T00:00:00Z')",
+        (team,),
+    )
+    conn.execute(
+        "INSERT INTO team_member (team_id, person_id, status, first_seen) VALUES (?, 'p2', 'active', '2026-01-05')",
+        (other,),
+    )
+    add_commit("pat@corp.example", "Pat Lee", "2026-09-01")
+    add_commit("pat@partner.example", "Pat Lee", "2026-09-02")
+    reconcile_team(conn, team, NOW, make_id=make_id)
+    core = conn.execute("SELECT * FROM team_member WHERE team_id = ?", (team,)).fetchall()
+    assert [(r["person_id"], r["status"], r["first_seen"]) for r in core] == [("p1", "active", "2025-12-01")]
+    assert core[0]["last_commit"] == "2026-09-02T12:00:00Z"
+    moved = conn.execute("SELECT person_id FROM team_member WHERE team_id = ?", (other,)).fetchall()
+    assert [r["person_id"] for r in moved] == ["p1"]
+    assert {r["person_id"] for r in conn.execute("SELECT person_id FROM identity")} == {"p1"}
+    marked = conn.execute("SELECT person_a, person_b, status FROM possible_duplicate").fetchall()
+    assert [(r["person_a"], r["person_b"], r["status"]) for r in marked] == [("p1", "p2", "merged")]
+
+
+def test_a_changed_email_with_the_same_account_stays_one_person(conn, add_commit, team, make_id):
+    add_commit("old@corp.example", "Sam Poole", "2026-09-01", account="{acc-9}")
+    reconcile_team(conn, team, NOW, make_id=make_id)
+    add_commit("new@corp.example", "Sam Poole", "2027-02-01", account="{acc-9}")
+    reconcile_team(conn, team, LATER, make_id=make_id)
+    assert conn.execute("SELECT COUNT(*) AS n FROM person").fetchone()["n"] == 1
+    assert roster(conn, team) == {"Sam Poole": "active"}
+    owners = {r["person_id"] for r in conn.execute("SELECT person_id FROM identity WHERE source = 'email'")}
+    assert len(owners) == 1
+
+
+def test_a_connector_level_failure_protects_every_repository_of_that_source(conn, add_commit, team, make_id):
+    add_commit("ann@corp.example", "Ann Example", "2026-09-01")
+    add_commit("bob@corp.example", "Bob Builder", "2026-09-02")
+    reconcile_team(conn, team, NOW, make_id=make_id)
+    add_commit("bob@corp.example", "Bob Builder", "2027-02-01")
+    result = reconcile_team(conn, team, LATER, stale_repos=[("bitbucket", "*")], make_id=make_id)
+    assert result.skipped_inactive_step is True
+    assert roster(conn, team) == {"Ann Example": "active", "Bob Builder": "active"}
+
+
+def test_unknown_repositories_are_named_in_the_result(conn, add_commit, make_id):
+    add_commit("ann@corp.example", "Ann Example", "2026-09-01")
+    typo = create_team(conn, "Typo", [("bitbucket", "r1"), ("bitbucket", "r-typo")], 90, now=NOW, make_id=make_id)
+    result = reconcile_team(conn, typo, NOW, make_id=make_id)
+    assert any("bitbucket:r-typo has no stored commits" in message for message in result.messages)
+    assert not any("bitbucket:r1 has no stored commits" in message for message in result.messages)
+    assert roster(conn, typo) == {"Ann Example": "active"}
+
+
+def test_one_failing_team_does_not_stop_the_others(conn, add_commit, team, make_id, monkeypatch):
+    seed_core(add_commit)
+    bad = create_team(conn, "Bad", REPOS, 90, now=NOW, make_id=make_id)
+    real = reconcile_module.reconcile_team
+
+    def flaky(connection, team_id, now, stale_repos=(), *args, **kwargs):
+        if team_id == bad:
+            raise RuntimeError("boom tok-1")
+        return real(connection, team_id, now, stale_repos, *args, **kwargs)
+
+    monkeypatch.setattr(reconcile_module, "reconcile_team", flaky)
+    lines, failed = reconcile_all(conn, NOW, redact=lambda text: text.replace("tok-1", "***"))
+    assert failed == 1
+    assert lines[0].startswith("Team Bad: FAILED") and "tok-1" not in lines[0] and "***" in lines[0]
+    assert lines[1].startswith("Team Core:")
+    assert roster(conn, team)["Ann Example"] == "active"
+
+
+def test_teams_on_sources_that_were_not_synced_are_left_alone(conn, add_commit, team, make_id):
+    seed_core(add_commit)
+    lines, failed = reconcile_all(conn, NOW, sources={"jira"})
+    assert (lines, failed) == ([], 0)
+    assert roster(conn, team) == {}
+    lines, _ = reconcile_all(conn, NOW, sources={"bitbucket"})
+    assert len(lines) == 1 and roster(conn, team)["Ann Example"] == "active"

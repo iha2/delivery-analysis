@@ -3,11 +3,11 @@ from __future__ import annotations
 import sqlite3
 import uuid
 from dataclasses import dataclass, field
-from typing import Callable, Iterable, List, Sequence, Set, Tuple
+from typing import Callable, Collection, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 from delivery_analysis.identity.merge import MergedPerson, merge_identities
 from delivery_analysis.store.sync_state import list_sync_states
-from delivery_analysis.teams.discover import discover_people, window_start
+from delivery_analysis.teams.discover import discover_people, unknown_repos, window_start
 
 Repo = Tuple[str, str]  # (source, repository_id)
 
@@ -84,6 +84,67 @@ def _upsert_identity(conn: sqlite3.Connection, source: str, account_id: str, per
         )
 
 
+_STATUS_RANK = {"active": 0, "inactive": 1, "excluded": 2}
+
+
+def _pinned_owners(conn: sqlite3.Connection) -> Dict[str, str]:
+    """Emails a human linked to a person; discovery never moves or merges these."""
+    return {
+        row["account_id"]: row["person_id"]
+        for row in conn.execute(
+            "SELECT account_id, person_id FROM identity "
+            "WHERE source = 'email' AND manual = 1 AND person_id IS NOT NULL"
+        )
+    }
+
+
+def _absorb(conn: sqlite3.Connection, loser: str, winner: str) -> None:
+    """Fold one stored person into another: move memberships and identities, mark the loser."""
+    rows = conn.execute(
+        "SELECT team_id, status, first_seen, last_commit, pinned, manual FROM team_member WHERE person_id = ?",
+        (loser,),
+    ).fetchall()
+    for row in rows:
+        existing = conn.execute(
+            "SELECT status, first_seen, last_commit, pinned, manual FROM team_member "
+            "WHERE team_id = ? AND person_id = ?",
+            (row["team_id"], winner),
+        ).fetchone()
+        if existing is None:
+            conn.execute(
+                "UPDATE team_member SET person_id = ? WHERE team_id = ? AND person_id = ?",
+                (winner, row["team_id"], loser),
+            )
+            continue
+        status = min((existing["status"], row["status"]), key=lambda value: _STATUS_RANK[value])
+        firsts = [v for v in (existing["first_seen"], row["first_seen"]) if v]
+        lasts = [v for v in (existing["last_commit"], row["last_commit"]) if v]
+        conn.execute(
+            "UPDATE team_member SET status = ?, first_seen = ?, last_commit = ?, pinned = ?, manual = ? "
+            "WHERE team_id = ? AND person_id = ?",
+            (
+                status,
+                min(firsts) if firsts else None,
+                max(lasts) if lasts else None,
+                max(existing["pinned"], row["pinned"]),
+                max(existing["manual"], row["manual"]),
+                row["team_id"],
+                winner,
+            ),
+        )
+        conn.execute(
+            "DELETE FROM team_member WHERE team_id = ? AND person_id = ?", (row["team_id"], loser)
+        )
+    conn.execute("UPDATE identity SET person_id = ? WHERE person_id = ? AND manual = 0", (winner, loser))
+    first, second = sorted((loser, winner))
+    conn.execute(
+        "INSERT INTO possible_duplicate (person_a, person_b, reason, status) "
+        "VALUES (?, ?, 'merged by discovery', 'merged') "
+        "ON CONFLICT(person_a, person_b) DO UPDATE SET status = 'merged'",
+        (first, second),
+    )
+
+
 def _resolve_person(
     conn: sqlite3.Connection, person: MergedPerson, make_id: Callable[[], str]
 ) -> str:
@@ -93,13 +154,26 @@ def _resolve_person(
         f"WHERE source = 'email' AND person_id IS NOT NULL AND account_id IN ({marks})",
         list(person.emails),
     ).fetchall()
+    for source, account_id in person.account_ids:
+        rows += conn.execute(
+            "SELECT person_id, manual FROM identity "
+            "WHERE source = ? AND account_id = ? AND person_id IS NOT NULL",
+            (source, account_id),
+        ).fetchall()
     manual_ids = sorted({row["person_id"] for row in rows if row["manual"]})
     if manual_ids:
         person_id = manual_ids[0]
     else:
         ids = sorted({row["person_id"] for row in rows})
         if ids:
-            person_id = ids[0]
+            renamed = [
+                pid for pid in ids
+                if conn.execute("SELECT manual FROM person WHERE person_id = ?", (pid,)).fetchone()["manual"]
+            ]
+            person_id = (renamed or ids)[0]
+            for loser in ids:
+                if loser != person_id:
+                    _absorb(conn, loser, person_id)
         else:
             person_id = make_id()
             conn.execute(
@@ -173,15 +247,18 @@ def reconcile_team(
         result.messages.append("no repositories selected, nothing to discover")
         return result
 
-    people, duplicates = merge_identities(
-        discover_people(conn, repos, window_start(now, team["window_days"]))
-    )
+    for source, repository_id in unknown_repos(conn, repos):
+        result.messages.append(f"repository {source}:{repository_id} has no stored commits")
+
+    activities = discover_people(conn, repos, window_start(now, team["window_days"]))
+    people, duplicates = merge_identities(activities, _pinned_owners(conn))
     if not people:
         result.messages.append("no commits in the window, roster unchanged")
         return result
 
     stale = set(stale_repos)
-    skip_inactive = any(repo in stale for repo in repos)
+    # A connector-level failure is stored under scope * and protects every repo of that source.
+    skip_inactive = any(repo in stale or (repo[0], "*") in stale for repo in repos)
     result.skipped_inactive_step = skip_inactive
     if skip_inactive:
         result.messages.append("a repository is stale, nobody was marked inactive")
@@ -233,13 +310,37 @@ def reconcile_team(
 
 
 def reconcile_all(
-    conn: sqlite3.Connection, now: str, stale_repos: Iterable[Repo] = ()
-) -> List[str]:
+    conn: sqlite3.Connection,
+    now: str,
+    stale_repos: Iterable[Repo] = (),
+    sources: Optional[Collection[str]] = None,
+    redact: Callable[[str], str] = lambda text: text,
+) -> Tuple[List[str], int]:
+    """Reconcile every team; returns (summary lines, number of teams that failed).
+
+    When `sources` is given, a team is only reconciled if every one of its repositories comes
+    from one of those sources, so a sync limited to one source never touches other teams.
+    One failing team never stops the others.
+    """
     stale = set(stale_repos)
     lines: List[str] = []
-    for row in conn.execute("SELECT team_id FROM team ORDER BY name").fetchall():
-        lines.append(reconcile_team(conn, row["team_id"], now, stale).summary())
-    return lines
+    failed = 0
+    for row in conn.execute("SELECT team_id, name FROM team ORDER BY name").fetchall():
+        if sources is not None:
+            team_sources = {
+                r["repository_source"]
+                for r in conn.execute(
+                    "SELECT DISTINCT repository_source FROM team_repo WHERE team_id = ?", (row["team_id"],)
+                )
+            }
+            if not team_sources <= set(sources):
+                continue
+        try:
+            lines.append(reconcile_team(conn, row["team_id"], now, stale).summary())
+        except Exception as exc:
+            failed += 1
+            lines.append(f"Team {row['name']}: FAILED, " + redact(str(exc) or exc.__class__.__name__))
+    return lines, failed
 
 
 def stale_repo_keys(conn: sqlite3.Connection) -> Set[Repo]:

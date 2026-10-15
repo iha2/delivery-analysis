@@ -133,3 +133,12 @@ def test_a_bad_teams_file_exits_2_with_a_plain_message(home, capsys):
 def test_exporting_an_unknown_team_exits_2(home, capsys):
     assert run(["teams", "export", str(home / "out.json"), "--team", "Nope"], home) == 2
     assert "No team named 'Nope'" in capsys.readouterr().out
+
+
+def test_discover_names_a_repository_with_no_stored_commits(home, capsys):
+    code = run(["teams", "discover", "--repo", "bitbucket:r1", "--repo", "bitbucket:typo"], home)
+    assert code == 0
+    out = capsys.readouterr().out
+    assert "bitbucket:typo has no stored commits" in out
+    assert "bitbucket:r1 has no stored commits" not in out
+    assert "Ann Example" in out

@@ -17,6 +17,22 @@ def window_start(now: str, days: int) -> str:
     return start
 
 
+def unknown_repos(conn: sqlite3.Connection, repos: Sequence[Repo]) -> List[Repo]:
+    """Selected repositories with no stored commits and no repository row (often a typo)."""
+    missing: List[Repo] = []
+    for source, repository_id in repos:
+        known = conn.execute(
+            "SELECT 1 FROM vcs_commit WHERE source = ? AND repository_id = ? LIMIT 1",
+            (source, repository_id),
+        ).fetchone() or conn.execute(
+            "SELECT 1 FROM repository WHERE source = ? AND source_id = ? LIMIT 1",
+            (source, repository_id),
+        ).fetchone()
+        if not known:
+            missing.append((source, repository_id))
+    return missing
+
+
 def discover_people(
     conn: sqlite3.Connection, repos: Sequence[Repo], since: str
 ) -> List[EmailActivity]:

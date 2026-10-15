@@ -86,16 +86,22 @@ def _import_member(
                 "INSERT INTO person (person_id, display_name, manual) VALUES (?, ?, 1)",
                 (person_id, name),
             )
+        # The name written in the file is a human edit, so it sticks.
+        conn.execute(
+            "UPDATE person SET display_name = ?, manual = 1 WHERE person_id = ?", (name, person_id)
+        )
         for source, account in keys:
             conn.execute(
                 "INSERT INTO identity (source, account_id, person_id, manual) VALUES (?, ?, ?, 1) "
                 "ON CONFLICT(source, account_id) DO UPDATE SET person_id = excluded.person_id, manual = 1",
                 (source, account, person_id),
             )
+        # A member with only a GitHub login can never be seen in commit history, so pin them.
+        pinned = 0 if emails else 1
         conn.execute(
             "INSERT INTO team_member (team_id, person_id, status, first_seen, last_commit, pinned, manual) "
-            "VALUES (?, ?, 'active', ?, NULL, 0, 0) ON CONFLICT(team_id, person_id) DO NOTHING",
-            (team_id, person_id, now[:10]),
+            "VALUES (?, ?, 'active', ?, NULL, ?, 0) ON CONFLICT(team_id, person_id) DO NOTHING",
+            (team_id, person_id, now[:10], pinned),
         )
         conn.execute("COMMIT")
     except Exception:

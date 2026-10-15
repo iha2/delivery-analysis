@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from collections import Counter
 from dataclasses import dataclass
-from typing import Dict, FrozenSet, List, Mapping, Sequence, Set, Tuple
+from typing import Dict, List, Mapping, Optional, Sequence, Set, Tuple
 
 BOT_TOKENS = frozenset({"bot", "bots", "jenkins", "noreply", "service", "automation", "ci"})
 
@@ -49,27 +49,39 @@ def _local_part(email: str) -> str:
     return email.split("@", 1)[0]
 
 
-def short_forms(name: str) -> FrozenSet[str]:
-    """Spellings a person's name can take: full, first initial + surname, first + last."""
+def _norm(name: str) -> str:
+    return "".join(_tokens(name))
+
+
+def _initial_surname(name: str) -> str:
     tokens = _tokens(name)
-    if not tokens:
-        return frozenset()
-    forms = {"".join(tokens)}
-    if len(tokens) >= 2:
-        forms.add(tokens[0][0] + tokens[-1])
-        forms.add(tokens[0] + tokens[-1])
-    return frozenset(forms)
+    return tokens[0][0] + tokens[-1] if len(tokens) >= 2 else ""
 
 
-def _forms_of(names: Mapping[str, int]) -> FrozenSet[str]:
-    forms: Set[str] = set()
-    for name in names:
-        forms |= short_forms(name)
-    return frozenset(forms)
-
-
-def names_compatible(a: Mapping[str, int], b: Mapping[str, int]) -> bool:
-    return bool(_forms_of(a) & _forms_of(b))
+def names_compatible(a: Mapping[str, int], b: Mapping[str, int], local: str = "") -> bool:
+    """Two sets of author names can belong to one person when, for some pair of names, the
+    normalized names are equal, or one equals the email local part, or one is the first
+    initial plus surname of the other."""
+    local_norm = re.sub(r"[^a-z0-9]", "", local.lower())
+    for name_a in a:
+        norm_a = _norm(name_a)
+        if not norm_a:
+            continue
+        initial_a = _initial_surname(name_a)
+        for name_b in b:
+            norm_b = _norm(name_b)
+            if not norm_b:
+                continue
+            if norm_a == norm_b:
+                return True
+            if local_norm and local_norm in (norm_a, norm_b):
+                return True
+            if initial_a and initial_a == norm_b:
+                return True
+            initial_b = _initial_surname(name_b)
+            if initial_b and initial_b == norm_a:
+                return True
+    return False
 
 
 def _is_bot(activity: EmailActivity) -> bool:
@@ -91,8 +103,13 @@ def _display_name(names: Counter, fallback: str) -> str:
 
 def merge_identities(
     activities: Sequence[EmailActivity],
+    pinned: Optional[Mapping[str, str]] = None,
 ) -> Tuple[List[MergedPerson], List[PossibleDuplicate]]:
-    """Group author emails into people. Weak matches go to the duplicate list, never guessed."""
+    """Group author emails into people. Weak matches go to the duplicate list, never guessed.
+
+    `pinned` maps an email to the person a human assigned it to; two emails pinned to different
+    people are never merged, so a manual split is replayed on every run."""
+    owners = pinned or {}
     items = sorted(activities, key=lambda activity: activity.email)
     parent = list(range(len(items)))
 
@@ -101,6 +118,10 @@ def merge_identities(
             parent[index] = parent[parent[index]]
             index = parent[index]
         return index
+
+    def blocked(i: int, j: int) -> bool:
+        owner_i, owner_j = owners.get(items[i].email), owners.get(items[j].email)
+        return owner_i is not None and owner_j is not None and owner_i != owner_j
 
     def union(i: int, j: int) -> None:
         root_i, root_j = find(i), find(j)
@@ -112,7 +133,8 @@ def merge_identities(
     for index, item in enumerate(items):
         for account in item.account_ids:
             if account in by_account:
-                union(index, by_account[account])
+                if not blocked(index, by_account[account]):
+                    union(index, by_account[account])
             else:
                 by_account[account] = index
 
@@ -124,7 +146,9 @@ def merge_identities(
     for local, indexes in by_local.items():
         for position, i in enumerate(indexes):
             for j in indexes[position + 1:]:
-                if names_compatible(items[i].names, items[j].names):
+                if blocked(i, j):
+                    continue
+                if names_compatible(items[i].names, items[j].names, local):
                     union(i, j)
                 else:
                     undecided.append((i, j, local))

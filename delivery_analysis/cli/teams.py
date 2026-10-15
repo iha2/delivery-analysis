@@ -10,7 +10,7 @@ from delivery_analysis.identity.merge import merge_identities
 from delivery_analysis.settings import Settings
 from delivery_analysis.store.db import connect, migrate
 from delivery_analysis.sync.runner import utc_now_iso
-from delivery_analysis.teams.discover import discover_people, window_start
+from delivery_analysis.teams.discover import discover_people, unknown_repos, window_start
 from delivery_analysis.teams.reconcile import create_team, reconcile_team
 from delivery_analysis.teams.yaml_io import export_teams, import_teams
 
@@ -76,6 +76,8 @@ def _discover(conn: sqlite3.Connection, args: argparse.Namespace, now: str) -> i
         print(reconcile_team(conn, team_id, now).summary())
         _print_roster(conn, team_id)
         return 0
+    for source, repository_id in unknown_repos(conn, repos):
+        print(f"Repository {source}:{repository_id} has no stored commits. Check the name and that the sync has run.")
     people, duplicates = merge_identities(discover_people(conn, repos, window_start(now, days)))
     if not people:
         print("No commits found for these repositories in the window. Has the sync run?")

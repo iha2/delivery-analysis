@@ -108,14 +108,24 @@ def _sync(
             redact_values=secrets,
             log=print,
         )
+        failed_teams = 0
         try:
-            for line in reconcile_all(conn, utc_now_iso(), stale_repo_keys(conn)):
+            lines, failed_teams = reconcile_all(
+                conn,
+                utc_now_iso(),
+                stale_repo_keys(conn),
+                {args.source} if args.source else None,
+                lambda text: redact(text, secrets),
+            )
+            for line in lines:
                 print(line)
         except Exception as exc:
+            failed_teams = 1
             print("Team update failed: " + redact(str(exc) or exc.__class__.__name__, secrets))
     finally:
         conn.close()
-    return 1 if any(result.status == "failed" for result in results) else 0
+    failed_sources = any(result.status == "failed" for result in results)
+    return 1 if (failed_sources or failed_teams) else 0
 
 
 def default_env_path() -> Path:
