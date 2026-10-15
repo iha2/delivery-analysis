@@ -79,7 +79,8 @@ def test_a_first_sync_stores_the_repository_commits_and_pull_requests(tmp_path):
         commits=[commit("h1", ANN, recent(1), account="acc-ann"), commit("h2", BOB, recent(2))],
         prs=[pr(1, "MERGED", recent(1)), pr(2, "OPEN", recent(2))],
     )
-    conn, connector = setup(tmp_path, fake, [("movedocs_v1.0", UUID_A)])
+    # budget 5 = validate 2 + repository + commits + list, so detail does not run
+    conn, connector = setup(tmp_path, fake, [("movedocs_v1.0", UUID_A)], budget=5)
     results = run_sync(conn, [connector])
     assert [(r.connector, r.scope, r.status) for r in results] == [("bitbucket", UUID_A, "ok")]
     repo = rows(conn, "SELECT source_id, workspace, name, default_branch FROM repository")
@@ -131,7 +132,7 @@ def test_a_merged_pull_request_gets_an_approximate_merge_time_before_detail(tmp_
     fake = FakeBitbucket()
     updated = recent(2)
     fake.add_repo("a", UUID_A, prs=[pr(1, "MERGED", updated)])
-    conn, connector = setup(tmp_path, fake, [("a", UUID_A)])
+    conn, connector = setup(tmp_path, fake, [("a", UUID_A)], budget=5)  # no budget left for detail
     run_sync(conn, [connector])
     row = rows(conn, "SELECT merged_at, closed_at FROM change_request")[0]
     assert row["merged_at"] == row["closed_at"] and row["merged_at"].endswith("Z")
