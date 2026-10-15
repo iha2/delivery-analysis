@@ -28,6 +28,8 @@ PR_STATES = ["OPEN", "MERGED", "DECLINED", "SUPERSEDED"]
 # Requests kept back per repository still to sync, so one repository's detail backlog
 # cannot use the whole run budget before the next repository's list stages.
 RESERVE_PER_REPO = 10
+# Live Bitbucket rejects pagelen above 50 on the pull request list and its activity (HTTP 400).
+PR_PAGELEN = 50
 COMMIT_FIELDS = (
     "next,values.hash,values.date,values.author.raw,values.author.user.account_id,values.parents.hash"
 )
@@ -166,7 +168,7 @@ class BitbucketConnector:
         self, uuid: str, repo_path: str, cutoff: str, exact: Set[str]
     ) -> Iterator[Batch]:
         params: Dict[str, Any] = {
-            "state": PR_STATES, "sort": "-updated_on", "pagelen": 100, "fields": PR_FIELDS,
+            "state": PR_STATES, "sort": "-updated_on", "pagelen": PR_PAGELEN, "fields": PR_FIELDS,
         }
         for page in self._client.pages(f"{repo_path}/pullrequests", params):
             records: List[Record] = []
@@ -230,6 +232,8 @@ class BitbucketConnector:
             return []
 
     def _detail(self, uuid: str, repo_path: str) -> Iterator[Batch]:
+        succeeded = 0
+        last_error: Optional[BitbucketError] = None
         for pending in self._pending_detail(uuid):
             if self._client.budget_left < self._remaining * RESERVE_PER_REPO + 3:
                 return
@@ -237,7 +241,7 @@ class BitbucketConnector:
             number = source_id.split("#", 1)[1]
             base = f"{repo_path}/pullrequests/{number}"
             try:
-                activity = self._all_items(f"{base}/activity", {"pagelen": 100})
+                activity = self._all_items(f"{base}/activity", {"pagelen": PR_PAGELEN})
                 commits = self._optional_items(f"{base}/commits", {"pagelen": 100, "fields": "next,values.hash"})
                 diffstat = self._optional_items(f"{base}/diffstat", {"pagelen": 100})
             except (BudgetExhausted, RateLimitedError):
@@ -247,8 +251,9 @@ class BitbucketConnector:
                 continue
             except AuthError:
                 raise
-            except BitbucketError:
-                continue  # this pull request is retried on the next sync
+            except BitbucketError as exc:
+                last_error = exc  # this pull request is retried on the next sync
+                continue
             events, summary = normalize.activity_records(source_id, activity)
             values: Dict[str, Any] = {
                 "source": SOURCE,
@@ -267,4 +272,7 @@ class BitbucketConnector:
                 records.append(normalize.prop("change_request", source_id, "times_from", "activity"))
             records.append(normalize.prop("change_request", source_id, "detail_updated_on", updated))
             raw = RawPayload(SOURCE, source_id, "pr_activity", json.dumps(activity, sort_keys=True))
+            succeeded += 1
             yield Batch(records, [raw])
+        if last_error is not None and succeeded == 0:
+            raise last_error  # every pull request failed the same way: that is a real problem, not a skip

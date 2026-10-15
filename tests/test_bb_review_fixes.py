@@ -121,3 +121,12 @@ def test_a_rate_limit_during_detail_ends_the_stage_without_failing_the_repo(tmp_
     assert sync_state.get_cursor(conn, "bitbucket", UUID_A) is not None
     assert repo_selection.detail_progress(conn, UUID_A) == (0, 3)
     assert len(rows(conn, "SELECT sha FROM vcs_commit")) == 1
+
+
+def test_when_every_pull_request_fails_detail_the_repo_fails_instead_of_silently_skipping(tmp_path):
+    fake = FakeBitbucket()
+    busy_repo(fake, "a", UUID_A, prs=3)
+    fake.errors["/diffstat"] = 500
+    conn, path = build(tmp_path, fake, [("a", UUID_A)])
+    results = run_sync(conn, [connector_for(path, fake)])
+    assert results[0].status == "failed" and "HTTP 500" in results[0].error

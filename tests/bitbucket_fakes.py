@@ -130,11 +130,15 @@ class FakeBitbucket:
             if self.pr_scope_missing:
                 return httpx.Response(403, json={})
             if len(rest) == 1:
+                if int(params.get("pagelen", ["10"])[0]) > 50:
+                    return httpx.Response(400, json={"error": {"message": "Invalid pagelen"}})
                 states = params.get("state", ["OPEN"])
                 items = [p for p in repo["prs"] if p["state"] in states]
                 items.sort(key=lambda p: p["updated_on"], reverse=True)
                 return self._page(request, items)
             if len(rest) == 3:
+                if rest[2] == "activity" and int(params.get("pagelen", ["10"])[0]) > 50:
+                    return httpx.Response(400, json={"error": {"message": "Invalid pagelen"}})
                 source = {
                     "activity": repo["activity"],
                     "commits": repo["pr_commits"],
