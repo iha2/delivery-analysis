@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Rankings · Delivery Analytics</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <nav id="nav">
+    <h1>Delivery Analytics</h1>
+    <a href="/">Dashboard</a>
+    <a href="/rankings">Rankings</a>
+    <a href="/selection">Selection</a>
+    <a href="/teams">Teams</a>
+    <a href="/sources">Sources</a>
+    <a href="/settings">Settings</a>
+    <a href="/ask">Ask</a>
+  </nav>
+  <div class="page">
+    <header id="header"></header>
+    <main id="content">
+      <h2>Rankings</h2>
+      <div class="form-row">
+        <label>Metric <select id="metric-picker" aria-label="Metric"></select></label>
+        <label><input type="checkbox" id="include-inactive"> include inactive members</label>
+      </div>
+      <p id="metric-description" class="note"></p>
+      <div id="ranking"></div>
+    </main>
+  </div>
+  <script src="/static/app.js"></script>
+  <script src="/static/pages/rankings.js"></script>
+</body>
+</html>
