@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, Iterator, List, Optional
 
 from fastapi import APIRouter, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from delivery_analysis.app.context import AppContext
 from delivery_analysis.cli.teams import parse_repo
@@ -35,7 +35,7 @@ PLANNED_SOURCES = ("bitbucket", "jira", "claude_usage", "confluence")
 class TeamIn(BaseModel):
     name: str
     repos: List[str]
-    window_days: int = 90
+    window_days: int = Field(90, ge=1, le=9999)
 
 
 class MemberIn(BaseModel):
@@ -109,6 +109,13 @@ def _age_minutes(ctx: AppContext, last_run: Optional[str]) -> Optional[int]:
     return int((ctx.clock() - then).total_seconds() // 60)
 
 
+def _refresh_state(ctx: AppContext) -> Dict[str, Any]:
+    state = ctx.worker.state()
+    state["error"] = ctx.clean(state["error"])
+    state["summary"] = ctx.clean(state["summary"])
+    return state
+
+
 def _anything_stale(ctx: AppContext, conn: sqlite3.Connection) -> bool:
     configured = {connector.name for connector in build_connectors(ctx.settings, ctx.environ, ctx.transport)}
     if not configured:
@@ -118,7 +125,7 @@ def _anything_stale(ctx: AppContext, conn: sqlite3.Connection) -> bool:
         return True
     for state in states:
         age = _age_minutes(ctx, state["last_run"])
-        if state["stale"] or age is None or age >= ctx.settings.refresh_after_minutes:
+        if age is None or age >= ctx.settings.refresh_after_minutes:
             return True
     return False
 
@@ -197,15 +204,12 @@ def build_router(ctx: AppContext) -> APIRouter:
                 "failed": bool(state["stale"]),
                 "age_minutes": _age_minutes(ctx, state["last_run"]),
             } for state in list_sync_states(conn)]
-        refresh = ctx.worker.state()
-        refresh["error"] = ctx.clean(refresh["error"])
-        refresh["summary"] = ctx.clean(refresh["summary"])
         return {
             "sources": rows,
             "configured": configured,
             "waiting": [name for name in PLANNED_SOURCES if name not in configured],
             "refresh_after_minutes": ctx.settings.refresh_after_minutes,
-            "refresh": refresh,
+            "refresh": _refresh_state(ctx),
         }
 
     @router.get("/metrics")
@@ -339,8 +343,8 @@ def build_router(ctx: AppContext) -> APIRouter:
         if body.only_stale:
             with _db(ctx) as conn:
                 if not _anything_stale(ctx, conn):
-                    return {"started": False, "refresh": ctx.worker.state()}
+                    return {"started": False, "refresh": _refresh_state(ctx)}
         started = ctx.worker.start(body.source, body.full)
-        return {"started": started, "refresh": ctx.worker.state()}
+        return {"started": started, "refresh": _refresh_state(ctx)}
 
     return router

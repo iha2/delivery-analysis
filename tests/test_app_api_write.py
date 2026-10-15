@@ -99,3 +99,72 @@ def test_cross_site_writes_are_refused_but_same_origin_is_fine(tmp_path):
     ok = client.post("/api/teams/t1/members/p-bob", json={"status": "active"},
                      headers={"Origin": "http://127.0.0.1:8000"})
     assert ok.status_code == 200
+
+
+def _failing_refresh_client(tmp_path):
+    run = FakeRun(error=f"boom {TOKEN}")
+    client, path, worker, _ = make(tmp_path, environ={"BITBUCKET": TOKEN}, run=run)
+    return client, path, worker
+
+
+def test_refresh_response_hides_the_token_when_nothing_is_started(tmp_path):
+    client, path, worker = _failing_refresh_client(tmp_path)
+    client.post("/api/refresh", json={})
+    worker.wait()
+    conn = db.connect(path)
+    sync_state.save_state(conn, "bitbucket", REPO, status="ok", error=None, records=1, now="2026-10-15T15:50:00Z")
+    conn.close()
+    response = client.post("/api/refresh", json={"only_stale": True})
+    assert response.json()["started"] is False
+    assert TOKEN not in response.text
+
+
+def test_refresh_response_hides_the_token_when_a_fast_run_already_failed(tmp_path):
+    client, _, worker = _failing_refresh_client(tmp_path)
+    start = worker.start
+
+    def start_and_finish(*args):
+        started = start(*args)
+        worker.wait()
+        return started
+
+    worker.start = start_and_finish
+    response = client.post("/api/refresh", json={})
+    assert response.json()["started"] is True
+    assert TOKEN not in response.text
+
+
+def test_write_guard_checks_the_origin_port_and_fetch_metadata(tmp_path):
+    client, *_ = make(tmp_path)
+    body = {"status": "active"}
+    url = "/api/teams/t1/members/p-bob"
+    for origin in ("http://localhost:3000", "https://127.0.0.1:8000"):
+        assert client.post(url, json=body, headers={"Origin": origin}).status_code == 403, origin
+    assert client.post(url, json=body, headers={"Origin": "http://127.0.0.1:8000"}).status_code == 200
+    for site in ("same-site", "cross-site"):
+        assert client.post(url, json=body, headers={"Sec-Fetch-Site": site}).status_code == 403, site
+    assert client.post(url, json=body, headers={"Sec-Fetch-Site": "same-origin"}).status_code == 200
+
+
+def test_team_window_days_must_be_in_range(tmp_path):
+    client, *_ = make(tmp_path)
+    for days in (0, 10000):
+        response = client.post("/api/teams", json={"name": "Z", "repos": ["bitbucket:core-repo"], "window_days": days})
+        assert response.status_code == 422, days
+    assert [t["name"] for t in client.get("/api/teams").json()["teams"]] == ["Core"]
+
+
+def test_a_recently_failed_source_does_not_restart_a_sync_but_an_old_failure_does(tmp_path):
+    run = FakeRun()
+    client, path, worker, _ = make(tmp_path, environ={"BITBUCKET": TOKEN}, run=run)
+    conn = db.connect(path)
+    sync_state.save_state(conn, "bitbucket", REPO, status="failed", error="rate limited", records=0,
+                          now="2026-10-15T15:55:00Z")
+    conn.close()
+    assert client.post("/api/refresh", json={"only_stale": True}).json()["started"] is False
+    conn = db.connect(path)
+    sync_state.save_state(conn, "bitbucket", REPO, status="failed", error="rate limited", records=0,
+                          now="2026-10-15T14:59:00Z")
+    conn.close()
+    assert client.post("/api/refresh", json={"only_stale": True}).json()["started"] is True
+    worker.wait()

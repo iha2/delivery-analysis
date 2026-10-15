@@ -77,7 +77,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def _serve(args: argparse.Namespace, settings: Settings, environ: Dict[str, str]) -> int:
-    app = create_app(settings.db_path, settings=settings, environ=environ)
+    app = create_app(settings.db_path, settings=settings, environ=environ, port=args.port)
     url = f"http://{settings.host}:{args.port}"
     if not args.no_browser:
         threading.Timer(1.0, webbrowser.open, args=[url]).start()

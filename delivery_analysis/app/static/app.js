@@ -14,7 +14,7 @@
     }
     return fetch(path, init).then(function (response) {
       return response.json().catch(function () { return {}; }).then(function (data) {
-        if (!response.ok) { throw new Error(data.detail || "HTTP " + response.status); }
+        if (!response.ok) { throw new Error(Array.isArray(data.detail) ? data.detail.map(function (item) { return item.msg; }).join("; ") : data.detail || "HTTP " + response.status); }
         return data;
       });
     });

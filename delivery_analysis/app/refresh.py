@@ -19,8 +19,9 @@ RunFn = Callable[[Optional[str], bool], str]
 class RefreshWorker:
     """Runs one background sync at a time and remembers how the last one went."""
 
-    def __init__(self, run: RunFn) -> None:
+    def __init__(self, run: RunFn, redact: Optional[Callable[[str], str]] = None) -> None:
         self._run = run
+        self._redact = redact or (lambda text: text)
         self._lock = threading.Lock()
         self._thread: Optional[threading.Thread] = None
         self._state: Dict[str, Any] = {
@@ -44,9 +45,10 @@ class RefreshWorker:
         error: Optional[str] = None
         summary: Optional[str] = None
         try:
-            summary = self._run(source, full)
+            result = self._run(source, full)
+            summary = None if result is None else self._redact(result)
         except Exception as exc:
-            error = str(exc) or exc.__class__.__name__
+            error = self._redact(str(exc) or exc.__class__.__name__)
         with self._lock:
             self._state.update({"running": False, "finished_at": utc_now_iso(), "error": error, "summary": summary})
 

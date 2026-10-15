@@ -13,7 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from delivery_analysis.app.api import build_router
 from delivery_analysis.app.context import AppContext, _utc_now
 from delivery_analysis.app.refresh import RefreshWorker, sync_runner
-from delivery_analysis.settings import Settings
+from delivery_analysis.settings import Settings, redact, secret_values
 from delivery_analysis.store.db import connect, current_version, migrate
 from delivery_analysis.store.sync_state import list_sync_states
 from delivery_analysis.store.upsert import unmapped_identities
@@ -49,14 +49,31 @@ def create_app(
     worker: Optional[RefreshWorker] = None,
     clock: Optional[Callable[[], datetime]] = None,
     allowed_hosts: Sequence[str] = LOCAL_HOSTS,
+    port: Optional[int] = None,
 ) -> FastAPI:
     path = Path(db_path)
     settings = settings or Settings(db_path=path)
     env = dict(environ or {})
-    worker = worker or RefreshWorker(sync_runner(path, settings, env, transport))
+    worker = worker or RefreshWorker(
+        sync_runner(path, settings, env, transport), redact=lambda text: redact(text, secret_values(env))
+    )
     ctx = AppContext(path, settings, env, worker, transport, clock or _utc_now)
     app = FastAPI(title="Delivery analytics")
     allowed = set(allowed_hosts)
+
+    def _origin_ok(origin: str) -> bool:
+        parsed = urlparse(origin)
+        if (parsed.hostname or "") not in allowed:
+            return False
+        if port is None:
+            return True
+        if parsed.scheme != "http":  # the app only serves plain http
+            return False
+        try:
+            origin_port = parsed.port or (443 if parsed.scheme == "https" else 80)
+        except ValueError:
+            return False
+        return origin_port == port
 
     setup = connect(path)
     try:
@@ -68,9 +85,11 @@ def create_app(
     async def local_only(request: Request, call_next: Any) -> Any:
         if _host_name(request.headers.get("host", "")) not in allowed:
             return JSONResponse({"detail": "This app only answers on localhost."}, status_code=403)
-        origin = request.headers.get("origin")
-        if request.method in WRITE_METHODS and origin and (urlparse(origin).hostname or "") not in allowed:
-            return JSONResponse({"detail": "Cross-site requests are not allowed."}, status_code=403)
+        if request.method in WRITE_METHODS:
+            origin = request.headers.get("origin")
+            site = request.headers.get("sec-fetch-site", "").lower()
+            if site in ("cross-site", "same-site") or (origin and not _origin_ok(origin)):
+                return JSONResponse({"detail": "Cross-site requests are not allowed."}, status_code=403)
         return await call_next(request)
 
     @app.get("/api/health")

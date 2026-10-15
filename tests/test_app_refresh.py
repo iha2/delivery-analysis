@@ -34,3 +34,18 @@ def test_a_failing_refresh_records_the_error_and_frees_the_worker():
     worker.start()
     worker.wait()
     assert worker.state()["error"] == "source down" and worker.state()["running"] is False
+
+
+def test_worker_redacts_stored_error_and_summary():
+    worker = RefreshWorker(lambda source, full: "done SECRET", redact=lambda text: text.replace("SECRET", "***"))
+    worker.start()
+    worker.wait()
+    assert worker.state()["summary"] == "done ***"
+
+    def boom(source, full):
+        raise RuntimeError("bad SECRET")
+
+    failing = RefreshWorker(boom, redact=lambda text: text.replace("SECRET", "***"))
+    failing.start()
+    failing.wait()
+    assert failing.state()["error"] == "bad ***"

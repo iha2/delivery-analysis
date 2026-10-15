@@ -38,7 +38,7 @@ def make(tmp_path, *, environ=None, run=None, transport=None, seeded=True):
     worker = RefreshWorker(fake)
     app = create_app(
         path, settings=Settings(db_path=path), environ=environ or {}, worker=worker,
-        clock=CLOCK, transport=transport,
+        clock=CLOCK, transport=transport, port=8000,
     )
     client = TestClient(app, base_url="http://127.0.0.1")
     return client, path, worker, fake
