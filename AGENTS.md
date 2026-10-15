@@ -136,3 +136,11 @@ Always state expected **wait time (~15–30 minutes)** once before a full fetch.
 | Defaults (org, output dir) | `github_analysis/config.py` |
 
 After changing CLI, columns, teams config schema, or monthly workflow: **update README.md first**, then adjust this file only if agent behavior changes.
+
+---
+
+## Delivery analytics package (agents editing code)
+
+- New code lives in `delivery_analysis/` (`core`, `connectors`, `store`, `sync`, `app`, `cli`). The GitHub code moved to `delivery_analysis/connectors/github/`; each old `github_analysis/...` module is a shim that aliases the old name to the new module, so do not add code to the shims.
+- Run tests with `uv run pytest`. Never print, log, or store credential values; use `delivery_analysis.settings.redact` and `Secret`.
+- Specs and plans live in `C:\Work\Planning`, not in this repo.

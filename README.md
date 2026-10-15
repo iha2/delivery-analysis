@@ -878,3 +878,15 @@ gh repo view OWNER/REPO
 ## For contributors
 
 See [docs/](docs/README.md) for architecture and CLI extension notes.
+
+## Delivery analytics app (new)
+
+A local app that syncs delivery data into one SQLite file and shows it in the browser. The monthly GitHub report above is unchanged.
+
+| Command | What it does |
+|---------|--------------|
+| `uv run delivery-analysis serve` | Start the app on `http://127.0.0.1:8000` (local only) and open the browser. Add `--no-browser` to skip opening it |
+| `uv run delivery-analysis sync [--source NAME]` | Sync configured sources into the database. With none configured it says so |
+| `uv run delivery-analysis doctor` | Show which credential variables (`ATLASSIAN`, `ANTHROPIC`, `ANTHROPIC_ADMIN`) are present. Names only, never values |
+
+The database is `delivery.sqlite` in the output folder (`GITHUB_ANALYSIS_RESULTS`, default `~/github-analysis-results`). Credentials come from environment variables or a git-ignored `.env` in the repo root.
