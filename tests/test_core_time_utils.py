@@ -57,3 +57,27 @@ def test_format_report_ts_uses_report_zone():
     moment = datetime(2026, 5, 1, 4, 0, tzinfo=UTC)
     assert tu.format_report_ts(moment, EASTERN) == "2026-05-01T00:00:00-04:00"
     assert tu.format_report_ts(None, EASTERN) == ""
+
+
+@pytest.mark.parametrize(
+    "value, expected",
+    [
+        ("2026-09-01T12:00:00Z", "2026-09-01T12:00:00Z"),
+        ("2026-09-01T12:00:00+00:00", "2026-09-01T12:00:00Z"),
+        ("2026-09-01T12:00:00.444234+00:00", "2026-09-01T12:00:00Z"),
+        ("2026-09-01T12:00:00.832-0700", "2026-09-01T19:00:00Z"),
+        ("2026-09-01T12:00:00+0200", "2026-09-01T10:00:00Z"),
+        ("2026-09-01T12:00:00.123456789Z", "2026-09-01T12:00:00Z"),
+        ("2026-09-01T12:00:00", "2026-09-01T12:00:00Z"),
+        ("2026-09-01", "2026-09-01T00:00:00Z"),
+    ],
+)
+def test_to_utc_iso_normalizes_every_shape_seen_in_atlassian_data(value, expected):
+    assert tu.to_utc_iso(value) == expected
+
+
+def test_to_utc_iso_gives_none_for_nothing_and_raises_for_junk():
+    assert tu.to_utc_iso(None) is None
+    assert tu.to_utc_iso("   ") is None
+    with pytest.raises(ValueError):
+        tu.to_utc_iso("yesterday")

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from datetime import date, datetime, time, timezone
 from typing import Optional
 from zoneinfo import ZoneInfo
@@ -84,3 +85,28 @@ def hours_between(start: Optional[datetime], end: Optional[datetime]) -> str:
     if start is None or end is None:
         return ""
     return f"{(end - start).total_seconds() / 3600.0:.4f}"
+
+
+_OFFSET_WITHOUT_COLON = re.compile(r"([+-])(\d{2})(\d{2})$")
+_FRACTION = re.compile(r"\.(\d+)")
+
+
+def to_utc_iso(value: Optional[str]) -> Optional[str]:
+    """Normalize an ISO 8601 timestamp to UTC `YYYY-MM-DDTHH:MM:SSZ`.
+
+    Accepts `Z`, `+HH:MM`, `+HHMM`, any number of fraction digits, a missing offset (UTC), or a
+    bare date. Returns None for None or blank; raises ValueError for anything else.
+    """
+    if value is None or not str(value).strip():
+        return None
+    text = str(value).strip()
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    match = _OFFSET_WITHOUT_COLON.search(text)
+    if match and "T" in text:
+        text = text[: match.start()] + f"{match.group(1)}{match.group(2)}:{match.group(3)}"
+    text = _FRACTION.sub(lambda f: "." + (f.group(1) + "000000")[:6], text, count=1)
+    parsed = datetime.fromisoformat(text)
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
