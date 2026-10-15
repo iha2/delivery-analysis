@@ -14,6 +14,7 @@ from delivery_analysis.connectors.bitbucket.client import (
     BudgetExhausted,
     ForbiddenError,
     NotFoundError,
+    RateLimitedError,
 )
 from delivery_analysis.core.time_utils import to_utc_iso
 from delivery_analysis.model.records import Batch, RawPayload, Record
@@ -24,6 +25,9 @@ from delivery_analysis.teams.discover import window_start
 
 SOURCE = "bitbucket"
 PR_STATES = ["OPEN", "MERGED", "DECLINED", "SUPERSEDED"]
+# Requests kept back per repository still to sync, so one repository's detail backlog
+# cannot use the whole run budget before the next repository's list stages.
+RESERVE_PER_REPO = 10
 COMMIT_FIELDS = (
     "next,values.hash,values.date,values.author.raw,values.author.user.account_id,values.parents.hash"
 )
@@ -51,6 +55,7 @@ class BitbucketConnector:
         self._workspace = workspace
         self._window_days = window_days
         self._now = now
+        self._remaining = 0
 
     # --- selection -------------------------------------------------------------------------
 
@@ -64,7 +69,9 @@ class BitbucketConnector:
             conn.close()
 
     def scopes(self) -> List[str]:
-        return sorted(row["repository_id"] for row in self._selected())
+        scopes = sorted(row["repository_id"] for row in self._selected())
+        self._remaining = len(scopes)
+        return scopes
 
     def _selection_for(self, scope: str) -> Dict[str, str]:
         for row in self._selected():
@@ -102,6 +109,8 @@ class BitbucketConnector:
                 )
             except ForbiddenError:
                 return ["The token is missing the read:pullrequest:bitbucket permission."]
+            except NotFoundError:
+                pass  # that repository is judged when it is synced, not for every repository
             except BitbucketError as exc:
                 return [str(exc)]
         return []
@@ -110,22 +119,29 @@ class BitbucketConnector:
 
     def sync(self, scope: str, since: Optional[str]) -> Iterator[Batch]:
         selection = self._selection_for(scope)
-        workspace = selection["workspace"]
+        self._remaining = max(0, self._remaining - 1)
+        try:
+            yield from self._sync_selected(scope, selection["workspace"], since)
+        except BudgetExhausted:
+            return  # the run budget is used up; the next sync continues
+
+    def _sync_selected(self, scope: str, workspace: str, since: Optional[str]) -> Iterator[Batch]:
         repo_path = f"/repositories/{workspace}/{quote(scope, safe='')}"
         started = self._now()
-        cutoff = since or window_start(started, self._window_days)
+        window = window_start(started, self._window_days)
+        cutoff = since or window
 
         data = self._client.get(repo_path, {"fields": "uuid,slug,full_name,mainbranch.name"})
         record, raw = normalize.repository_record(workspace, data)
         yield Batch([record], [raw])
 
-        yield from self._commits(scope, repo_path, cutoff)
-        detailed = self._detailed_ids(scope)
-        yield from self._pull_requests(scope, repo_path, cutoff, detailed)
+        yield from self._commits(scope, repo_path, cutoff, window)
+        exact = self._exact_time_ids(scope)
+        yield from self._pull_requests(scope, repo_path, cutoff, exact)
         yield Batch([], cursor=started)
         yield from self._detail(scope, repo_path)
 
-    def _commits(self, uuid: str, repo_path: str, cutoff: str) -> Iterator[Batch]:
+    def _commits(self, uuid: str, repo_path: str, cutoff: str, window: str) -> Iterator[Batch]:
         params = {"pagelen": 100, "fields": COMMIT_FIELDS}
         for page in self._client.pages(f"{repo_path}/commits", params):
             values = page.get("values", [])
@@ -134,11 +150,10 @@ class BitbucketConnector:
             all_old = bool(values)
             for item in values:
                 committed = to_utc_iso(item.get("date"))
-                if committed is not None and committed < cutoff:
-                    continue
-                all_old = False
-                if committed is None:
-                    continue
+                if committed is None or committed >= cutoff:
+                    all_old = False
+                if committed is None or committed < window:
+                    continue  # kept commits use the full window: author dates can be older than the cursor
                 recs, raw = normalize.commit_records(uuid, item)
                 records.extend(recs)
                 raws.append(raw)
@@ -148,7 +163,7 @@ class BitbucketConnector:
                 break
 
     def _pull_requests(
-        self, uuid: str, repo_path: str, cutoff: str, detailed: Set[str]
+        self, uuid: str, repo_path: str, cutoff: str, exact: Set[str]
     ) -> Iterator[Batch]:
         params: Dict[str, Any] = {
             "state": PR_STATES, "sort": "-updated_on", "pagelen": 100, "fields": PR_FIELDS,
@@ -164,7 +179,7 @@ class BitbucketConnector:
                     break
                 source_id = f"{uuid}#{item['id']}"
                 recs, raw = normalize.pull_request_records(
-                    uuid, item, include_times=source_id not in detailed
+                    uuid, item, include_times=source_id not in exact
                 )
                 records.extend(recs)
                 raws.append(raw)
@@ -173,12 +188,13 @@ class BitbucketConnector:
             if stop:
                 break
 
-    def _detailed_ids(self, uuid: str) -> Set[str]:
+    def _exact_time_ids(self, uuid: str) -> Set[str]:
+        """Pull requests whose merge/close times came from activity and must not be approximated."""
         conn = connect(self._db_path)
         try:
             rows = conn.execute(
                 "SELECT record_id FROM property WHERE record_kind = 'change_request' "
-                "AND name = 'detail_updated_on' AND record_id LIKE ?",
+                "AND name = 'times_from' AND value = 'activity' AND record_id LIKE ?",
                 (uuid + "#%",),
             ).fetchall()
             return {row["record_id"] for row in rows}
@@ -206,20 +222,33 @@ class BitbucketConnector:
             items.extend(page.get("values", []))
         return items
 
+    def _optional_items(self, path: str, params: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """A pull request's commits or diffstat can be gone (deleted branch); that is empty, not an error."""
+        try:
+            return self._all_items(path, params)
+        except NotFoundError:
+            return []
+
     def _detail(self, uuid: str, repo_path: str) -> Iterator[Batch]:
         for pending in self._pending_detail(uuid):
+            if self._client.budget_left < self._remaining * RESERVE_PER_REPO + 3:
+                return
             source_id, updated = pending["source_id"], pending["updated"]
             number = source_id.split("#", 1)[1]
             base = f"{repo_path}/pullrequests/{number}"
             try:
                 activity = self._all_items(f"{base}/activity", {"pagelen": 100})
-                commits = self._all_items(f"{base}/commits", {"pagelen": 100, "fields": "next,values.hash"})
-                diffstat = self._all_items(f"{base}/diffstat", {"pagelen": 100})
-            except BudgetExhausted:
+                commits = self._optional_items(f"{base}/commits", {"pagelen": 100, "fields": "next,values.hash"})
+                diffstat = self._optional_items(f"{base}/diffstat", {"pagelen": 100})
+            except (BudgetExhausted, RateLimitedError):
                 return
             except NotFoundError:
                 yield Batch([normalize.prop("change_request", source_id, "detail_updated_on", updated)])
                 continue
+            except AuthError:
+                raise
+            except BitbucketError:
+                continue  # this pull request is retried on the next sync
             events, summary = normalize.activity_records(source_id, activity)
             values: Dict[str, Any] = {
                 "source": SOURCE,
@@ -234,7 +263,8 @@ class BitbucketConnector:
             records: List[Record] = list(events)
             records.append(Record("change_request", values))
             records.extend(normalize.commit_link_records(uuid, source_id, commits))
-            records.append(normalize.prop("change_request", source_id, "times_from", "activity"))
+            if summary.closed_at is not None:
+                records.append(normalize.prop("change_request", source_id, "times_from", "activity"))
             records.append(normalize.prop("change_request", source_id, "detail_updated_on", updated))
             raw = RawPayload(SOURCE, source_id, "pr_activity", json.dumps(activity, sort_keys=True))
             yield Batch(records, [raw])

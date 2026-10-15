@@ -91,3 +91,10 @@ def test_teams_discover_resolves_a_slug_through_the_selection(tmp_path, fake, ca
     out = capsys.readouterr().out
     assert "Ann Example" in out and "ann@corp.example" in out
     assert "has no stored commits" not in out
+
+
+def test_sync_prints_pull_request_detail_progress(tmp_path, fake, capsys):
+    run(["repos", "add", "bitbucket:movedocs_v1.0"], tmp_path, fake)
+    capsys.readouterr()
+    run(["sync", "--source", "bitbucket"], tmp_path, fake)
+    assert "pull request detail: 1 of 1" in capsys.readouterr().out

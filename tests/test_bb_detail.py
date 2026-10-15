@@ -1,3 +1,4 @@
+from delivery_analysis.core.time_utils import to_utc_iso
 from bitbucket_fakes import FakeBitbucket, approval, comment, commit, pr, recent, update
 from delivery_analysis.connectors.bitbucket.client import BitbucketClient
 from delivery_analysis.connectors.bitbucket.connector import BitbucketConnector
@@ -26,7 +27,7 @@ def rows(conn, sql, *params):
     return [dict(r) for r in conn.execute(sql, params).fetchall()]
 
 
-MERGED_AT = recent(1)
+MERGED_AT = recent(3)  # clearly different from PR 3's updated_on (recent(1))
 
 
 def standard(fake):
@@ -56,10 +57,10 @@ def test_detail_fills_events_exact_times_counts_and_links(tmp_path):
     events = rows(conn, "SELECT type FROM change_event WHERE change_request_id = ?", sid3)
     assert sorted(e["type"] for e in events) == ["approved", "comment", "merged", "update"]
     cr = rows(conn, "SELECT merged_at, closed_at, files_changed, commit_count FROM change_request WHERE source_id = ?", sid3)[0]
-    assert cr["merged_at"] == cr["closed_at"] and cr["merged_at"].endswith("Z")
+    assert cr["merged_at"] == cr["closed_at"] == to_utc_iso(MERGED_AT)
     assert (cr["files_changed"], cr["commit_count"]) == (2, 2)
     linked = {r["sha"] for r in rows(conn, "SELECT sha FROM vcs_commit WHERE change_request_id = ?", sid3)}
-    assert linked in ({"h1", "h2"}, {"h1"})  # h2 may later be linked to PR 2; both are valid links
+    assert "h1" in linked  # a commit in two pull requests is linked to the one detailed last
     props = {(r["record_id"], r["name"]): r["value"] for r in rows(conn, "SELECT record_id, name, value FROM property WHERE record_kind = 'change_request'")}
     assert props[(sid3, "times_from")] == "activity"
     assert props[(sid3, "detail_updated_on")] == props[(sid3, "updated_on")]

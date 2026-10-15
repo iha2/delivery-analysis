@@ -25,6 +25,7 @@ from delivery_analysis.settings import (
     secret_values,
 )
 from delivery_analysis.store.db import connect, migrate
+from delivery_analysis.store.repo_selection import detail_progress
 from delivery_analysis.cli import repos as repos_cli
 from delivery_analysis.cli import teams as teams_cli
 from delivery_analysis.sync.runner import run_sync, utc_now_iso
@@ -118,6 +119,10 @@ def _sync(
                 "Nothing to sync: no repositories are selected. "
                 "Run: delivery-analysis repos add bitbucket:<workspace>/<repo>"
             )
+        for result in results:
+            if result.connector == "bitbucket" and result.status == "ok":
+                done, total = detail_progress(conn, result.scope)
+                print(f"  pull request detail: {done} of {total}")
         failed_teams = 0
         try:
             lines, failed_teams = reconcile_all(
