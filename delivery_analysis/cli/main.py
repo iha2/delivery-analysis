@@ -24,7 +24,9 @@ from delivery_analysis.settings import (
     secret_values,
 )
 from delivery_analysis.store.db import connect, migrate
-from delivery_analysis.sync.runner import run_sync
+from delivery_analysis.cli import teams as teams_cli
+from delivery_analysis.sync.runner import run_sync, utc_now_iso
+from delivery_analysis.teams.reconcile import reconcile_all, stale_repo_keys
 from github_analysis.cli.commands import COMMAND_REGISTRARS
 
 NO_CONNECTORS_MESSAGE = (
@@ -42,7 +44,8 @@ def build_parser() -> argparse.ArgumentParser:
             "App commands:\n"
             "  serve     Start the local web app on 127.0.0.1\n"
             "  sync      Sync configured sources into the local database\n"
-            "  doctor    Show which credential variables are present (names only)\n\n"
+            "  doctor    Show which credential variables are present (names only)\n"
+            "  teams     Discover, save, import and export team rosters\n\n"
             "GitHub report commands (need GitHub CLI `gh` authenticated with read access):\n"
             "  analyze   Fetch data from GitHub and write TSV reports\n"
             "  export    Convert TSV reports to Excel\n"
@@ -65,6 +68,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     for register in COMMAND_REGISTRARS:
         register(commands)
+    teams_cli.register(commands)
     return parser
 
 
@@ -95,14 +99,20 @@ def _sync(
     conn = connect(settings.db_path)
     try:
         migrate(conn)
+        secrets = secret_values(environ)
         results = run_sync(
             conn,
             active,
             overlap_days=settings.overlap_days,
             only=args.source,
-            redact_values=secret_values(environ),
+            redact_values=secrets,
             log=print,
         )
+        try:
+            for line in reconcile_all(conn, utc_now_iso(), stale_repo_keys(conn)):
+                print(line)
+        except Exception as exc:
+            print("Team update failed: " + redact(str(exc) or exc.__class__.__name__, secrets))
     finally:
         conn.close()
     return 1 if any(result.status == "failed" for result in results) else 0
@@ -162,6 +172,8 @@ def main(
             return 2
         env_error = True
     settings = Settings.from_env(env)
+    if args.command == "teams":
+        return teams_cli.run(args, settings)
     if args.command == "serve":
         return _serve(args, settings)
     if args.command == "sync":
