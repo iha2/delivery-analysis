@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Delivery Analytics</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    body { margin: 0; font-family: system-ui, sans-serif; display: flex; min-height: 100vh; color: #1f2937; }
+    nav { width: 11rem; background: #f3f4f6; padding: 1rem; box-sizing: border-box; }
+    nav h1 { font-size: 1rem; margin: 0 0 1rem; }
+    nav a { display: block; padding: .4rem .6rem; color: #1f2937; text-decoration: none; border-radius: .3rem; }
+    nav a.active { background: #dbeafe; font-weight: 600; }
+    main { flex: 1; padding: 1rem 1.5rem; }
+    #freshness { font-size: .9rem; color: #4b5563; margin-bottom: 1rem; }
+    .stale { color: #b45309; font-weight: 600; }
+  </style>
+</head>
+<body>
+  <nav>
+    <h1>Delivery Analytics</h1>
+    <a href="/" data-title="Dashboard">Dashboard</a>
+    <a href="/rankings" data-title="Rankings">Rankings</a>
+    <a href="/selection" data-title="Selection">Selection</a>
+    <a href="/teams" data-title="Teams">Teams</a>
+    <a href="/sources" data-title="Sources">Sources</a>
+    <a href="/settings" data-title="Settings">Settings</a>
+    <a href="/ask" data-title="Ask">Ask</a>
+  </nav>
+  <main>
+    <div id="freshness">Loading source status...</div>
+    <h2 id="page-title"></h2>
+    <p id="page-note"></p>
+  </main>
+  <script>
+    (function () {
+      var path = window.location.pathname;
+      var links = document.querySelectorAll("nav a");
+      var title = "Dashboard";
+      links.forEach(function (link) {
+        if (link.getAttribute("href") === path) {
+          link.classList.add("active");
+          title = link.getAttribute("data-title");
+        }
+      });
+      document.getElementById("page-title").textContent = title;
+      document.getElementById("page-note").textContent =
+        "This screen is a placeholder. It is built in a later spec.";
+
+      var strip = document.getElementById("freshness");
+      fetch("/api/health")
+        .then(function (response) { return response.json(); })
+        .then(function (health) {
+          strip.textContent = "";
+          if (!health.sources.length) {
+            strip.textContent = "No sources synced yet.";
+            return;
+          }
+          health.sources.forEach(function (source) {
+            var span = document.createElement("span");
+            span.textContent = source.connector + "/" + source.scope + ": " +
+              (source.stale ? "stale" : source.status) + "   ";
+            if (source.stale) { span.className = "stale"; }
+            strip.appendChild(span);
+          });
+        })
+        .catch(function () { strip.textContent = "Could not load source status."; });
+    })();
+  </script>
+</body>
+</html>
