@@ -11,6 +11,9 @@ DEFAULT_OUTPUT_DIR = Path.home() / "github-analysis-results"
 DB_FILE_NAME = "delivery.sqlite"
 CREDENTIAL_VARS = ("ATLASSIAN", "BITBUCKET", "ANTHROPIC", "ANTHROPIC_ADMIN")
 
+# Names shown by `doctor` that are configuration, not secrets (never redacted).
+CONFIG_VARS = ("ATLASSIAN_EMAIL",)
+
 
 def parse_env_text(text: str) -> Dict[str, str]:
     """Parse KEY=VALUE lines. Handles comments, blanks, CRLF, `export `, and quoted values."""
