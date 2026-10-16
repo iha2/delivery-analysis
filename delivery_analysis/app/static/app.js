@@ -70,6 +70,7 @@
     if (unit === "ratio") { return Math.round(value * 100) + "%"; }
     if (unit === "hours") { return value >= 48 ? (value / 24).toFixed(1) + " d" : value.toFixed(1) + " h"; }
     if (unit === "usd") { return "$" + value.toFixed(2); }
+    if (unit === "points_per_usd") { return value.toFixed(2); }
     return Number.isInteger(value) ? String(value) : value.toFixed(1);
   };
 
@@ -110,9 +111,14 @@
     body.appendChild(DA.el("ul", { class: "notes" }, notes.map(function (n) { return DA.el("li", { text: n }); })));
   };
 
+  DA.sourceLabel = function (name) {
+    const labels = { jira: "Jira", bitbucket: "Bitbucket", claude_usage: "Claude usage", links: "pull request links", confluence: "Confluence" };
+    return labels[name] || name.replace("_", " ");
+  };
+
   DA.showResult = function (body, result) {
     if (result.status === "waiting") {
-      DA.message(body, "Waiting for " + result.missing.join(" and ") + " data. This fills in when that source is connected.");
+      DA.message(body, "Waiting for " + result.missing.map(DA.sourceLabel).join(" and ") + " data. This fills in when that source is connected.");
       return true;
     }
     if (result.status === "error") {
@@ -134,10 +140,10 @@
   };
 
   let canvasCount = 0;
-  DA.canvas = function (body) {
+  DA.canvas = function (body, extra) {
     canvasCount += 1;
     const canvas = DA.el("canvas", { id: "chart-" + canvasCount, role: "img" });
-    body.appendChild(DA.el("div", { class: "chart" }, [canvas]));
+    body.appendChild(DA.el("div", { class: "chart" + (extra ? " " + extra : "") }, [canvas]));
     return canvas;
   };
 

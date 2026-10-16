@@ -1,17 +1,162 @@
 (function () {
   "use strict";
   const DA = window.DA;
+  // Metrics that have a card (or feed one): the "Coming with new sources" list skips them.
+  const ON_CARDS = ["story_points_weekly", "story_points_done", "issues_done", "points_by_type", "cycle_time_weekly",
+    "cycle_time_summary", "prs_linked_weekly", "prs_with_issue_link", "story_points_per_dollar", "ask_generate_ratio",
+    "issues_done_weekly", "prs_merged_weekly", "time_to_merge", "lead_time_breakdown", "review_load", "work_in_progress"];
 
   function load(name, extra) { return DA.api("/api/metrics/" + name + DA.query(extra)); }
+  function fail(body) { return function (e) { DA.message(body, e.message, "error"); }; }
+  function sum(rows, key) { return rows.reduce(function (total, row) { return total + (row[key] || 0); }, 0); }
+  function weeks(rows) { return rows.map(function (row) { return row.week; }); }
+  function tile(content, label) {
+    return DA.el("div", { class: "stat" }, [DA.el("strong", {}, [content]), DA.el("span", { text: label })]);
+  }
+  function basis(body, text) { body.appendChild(DA.el("p", { class: "note", text: text })); }
+
+  function impact(cards) {
+    const body = DA.card(cards, "Impact delivered", "Story points of completed issues, credited to the authors of their linked pull requests (the assignee when none is linked)");
+    Promise.all([load("story_points_weekly"), load("story_points_done")]).then(function (all) {
+      const weekly = all[0], done = all[1];
+      if (DA.showResult(body, weekly)) { return; }
+      const total = sum(weekly.rows, "value");
+      const completed = sum(weekly.rows, "issues");
+      const without = sum(weekly.rows, "unpointed");
+      // The trend is computed on the server (team.trend and team.previous); the browser only shows it.
+      const hasTeam = done.status === "ok" && !!done.team;
+      const trend = hasTeam ? done.team.trend : null;
+      const previous = hasTeam ? done.team.previous : null;
+      body.appendChild(DA.el("div", { class: "stats" }, [
+        tile(DA.fmt(total, "points"), "story points done"),
+        tile(DA.trend(trend, "higher"), previous === null || previous === undefined ? "vs previous window" : "vs previous window (" + DA.fmt(previous, "points") + " points)"),
+        tile(DA.fmt(completed, "count"), "completed issues"),
+        tile(DA.fmt(without, "count"), "without points"),
+      ]));
+      DA.charts.bars(DA.canvas(body), weeks(weekly.rows), weekly.rows.map(function (w) { return w.value; }), "Story points");
+      DA.table(body, ["Week starting", "Story points", "Issues"], weekly.rows.map(function (w) { return [w.week, DA.fmt(w.value, "points"), w.issues]; }));
+      basis(body, "Based on " + (completed - without) + " completed issues with story points.");
+      DA.notes(body, weekly.notes);
+      if (trend === null || trend === undefined) { DA.notes(body, (done.notes || []).filter(function (n) { return n.indexOf("trend") !== -1; })); }
+    }).catch(fail(body));
+  }
+
+  function whereItWent(cards) {
+    const body = DA.card(cards, "Where it went", "Story points by issue type");
+    load("points_by_type").then(function (r) {
+      if (DA.showResult(body, r)) { return; }
+      if (!r.rows.length) { DA.message(body, "No completed issues with story points in this window."); DA.notes(body, r.notes); return; }
+      DA.charts.hbars(DA.canvas(body), r.rows.map(function (p) { return p.part; }), r.rows.map(function (p) { return p.value; }), "Story points");
+      DA.table(body, ["Issue type", "Story points", "Issues"], r.rows.map(function (p) { return [p.part, DA.fmt(p.value, "points"), p.count]; }));
+      basis(body, "Based on " + sum(r.rows, "count") + " completed issues with story points.");
+      DA.notes(body, r.notes);
+    }).catch(fail(body));
+  }
+
+  function howFast(cards) {
+    const body = DA.card(cards, "How fast", "Hours from first In Progress to COMPLETED, and to the first merged linked pull request, counting each issue once");
+    Promise.all([load("cycle_time_weekly"), load("cycle_time_summary")]).then(function (all) {
+      const r = all[0], summary = all[1];
+      if (DA.showResult(body, r)) { return; }
+      const count = sum(r.rows, "count");
+      if (!count) { DA.message(body, "No completed issues with a start time in this window."); DA.notes(body, r.notes); return; }
+      if (summary.status === "ok") {
+        body.appendChild(DA.el("div", { class: "stats" }, summary.rows.map(function (p) {
+          return tile(DA.fmt(p.median, "hours"), "median " + p.part.toLowerCase() + " (85th percentile " + DA.fmt(p.p85, "hours") + ", " + p.count + " issues)");
+        })));
+      }
+      DA.charts.series(DA.canvas(body), weeks(r.rows), [
+        { label: "Median to COMPLETED", data: r.rows.map(function (w) { return w.median; }) },
+        { label: "85th percentile to COMPLETED", data: r.rows.map(function (w) { return w.p85; }) },
+        { label: "Median to first PR merge", data: r.rows.map(function (w) { return w.pr_median; }) },
+      ], { type: "line" });
+      DA.table(body, ["Week starting", "Median", "85th percentile", "Issues", "Median to first PR merge", "Issues with a merged PR"],
+        r.rows.map(function (w) { return [w.week, DA.fmt(w.median, "hours"), DA.fmt(w.p85, "hours"), w.count, DA.fmt(w.pr_median, "hours"), w.pr_count]; }));
+      basis(body, "Based on " + count + " completed issues with a start time.");
+      DA.notes(body, r.notes);
+    }).catch(fail(body));
+  }
+
+  function evidence(cards) {
+    const body = DA.card(cards, "Evidence", "Merged pull requests per week, split by whether an issue key links them");
+    Promise.all([load("prs_linked_weekly"), load("prs_with_issue_link")]).then(function (all) {
+      const weekly = all[0], rate = all[1];
+      if (DA.showResult(body, weekly)) { return; }
+      if (rate.status === "ok" && rate.team) {
+        body.appendChild(DA.el("div", { class: "stats" }, [
+          tile(DA.fmt(rate.team.value, "ratio"), "of merged pull requests link to an issue"),
+          tile(String(rate.team.sample), "merged pull requests"),
+        ]));
+      }
+      DA.charts.series(DA.canvas(body), weeks(weekly.rows), [
+        { label: "Linked to an issue", data: weekly.rows.map(function (w) { return w.linked; }) },
+        { label: "No issue key", data: weekly.rows.map(function (w) { return w.unlinked; }) },
+      ], { type: "bar", stacked: true });
+      DA.table(body, ["Week starting", "Linked", "No issue key"], weekly.rows.map(function (w) { return [w.week, w.linked, w.unlinked]; }));
+      if (rate.status === "ok") {
+        const people = rate.rows.filter(function (x) { return x.sample > 0; });
+        if (people.length) {
+          DA.table(body, ["Person", "Link rate", "Merged pull requests"],
+            people.map(function (x) { return [x.name, DA.fmt(x.value, "ratio"), x.sample]; }));
+        }
+      }
+      DA.notes(body, weekly.notes);
+    }).catch(fail(body));
+  }
+
+  function impactPerToken(cards) {
+    const body = DA.card(cards, "Impact per token", "Story points done per dollar of Claude cost, by person (cost is the proxy for tokens)");
+    load("story_points_per_dollar").then(function (r) {
+      if (DA.showResult(body, r)) { return; }
+      const rows = r.rows.filter(function (x) { return x.value !== null && x.person_id; });
+      if (!rows.length) { DA.message(body, "No cost and points pairs in this window."); return; }
+      DA.charts.hbars(DA.canvas(body), rows.map(function (x) { return x.name; }), rows.map(function (x) { return x.value; }), "Story points per dollar");
+      DA.table(body, ["Person", "Points per dollar"], rows.map(function (x) { return [x.name, DA.fmt(x.value, "points_per_usd")]; }));
+      DA.notes(body, r.notes);
+    }).catch(fail(body));
+  }
+
+  function costVsPoints(cards) {
+    const body = DA.card(cards, "Cost and impact by person", "Each dot is one person: Claude cost against story points done");
+    load("story_points_per_dollar").then(function (r) {
+      if (DA.showResult(body, r)) { return; }
+      const rows = r.rows.filter(function (x) { return x.person_id && x.numerator !== undefined && x.denominator !== undefined; });
+      if (!rows.length) { DA.message(body, "No cost and points pairs in this window."); return; }
+      DA.charts.scatter(DA.canvas(body), rows.map(function (p) { return { x: p.denominator, y: p.numerator, label: p.name }; }),
+        { x: "Claude cost (USD)", y: "Story points done" });
+      DA.table(body, ["Person", "Cost", "Story points"], rows.map(function (p) { return [p.name, DA.fmt(p.denominator, "usd"), DA.fmt(p.numerator, "points")]; }));
+      DA.notes(body, r.notes);
+    }).catch(fail(body));
+  }
+
+  function askVsGenerate(cards) {
+    const body = DA.card(cards, "Ask vs generate", "Context only, not a score: hard or unfamiliar work needs more asking");
+    load("ask_generate_ratio").then(function (r) {
+      if (DA.showResult(body, r)) { return; }
+      const rows = r.rows.filter(function (x) { return x.value !== null && x.person_id; })
+        .sort(function (a, b) { return a.name.localeCompare(b.name); });
+      if (!rows.length) { DA.message(body, "No usage in this window."); return; }
+      DA.charts.hbars(DA.canvas(body), rows.map(function (x) { return x.name; }), rows.map(function (x) { return x.value; }), "Ask to generate ratio");
+      DA.table(body, ["Person", "Ask to generate"], rows.map(function (x) { return [x.name, DA.fmt(x.value, r.unit)]; }));
+      DA.notes(body, r.notes);
+    }).catch(fail(body));
+  }
 
   function throughput(cards) {
-    const body = DA.card(cards, "Throughput by week", "Pull requests merged per week (issues done appear when Jira is connected)");
+    const body = DA.card(cards, "Throughput by week", "Pull requests merged per week, and issues done when Jira is connected");
     load("prs_merged_weekly").then(function (r) {
       if (DA.showResult(body, r)) { return; }
-      DA.charts.bars(DA.canvas(body), r.rows.map(function (w) { return w.week; }), r.rows.map(function (w) { return w.value; }), "PRs merged");
+      DA.charts.bars(DA.canvas(body), weeks(r.rows), r.rows.map(function (w) { return w.value; }), "PRs merged");
       DA.table(body, ["Week starting", "PRs merged"], r.rows.map(function (w) { return [w.week, w.value]; }));
       DA.notes(body, r.notes);
-    }).catch(function (e) { DA.message(body, e.message, "error"); });
+      return load("issues_done_weekly").then(function (issues) {
+        if (issues.status !== "ok") { basis(body, "Issues done appear here when Jira is connected."); return; }
+        body.appendChild(DA.el("p", { class: "note", text: "Issues done per week" }));
+        DA.charts.bars(DA.canvas(body, "small"), weeks(issues.rows), issues.rows.map(function (w) { return w.value; }), "Issues done");
+        DA.table(body, ["Week starting", "Issues done"], issues.rows.map(function (w) { return [w.week, w.value]; }));
+        DA.notes(body, issues.notes);
+      });
+    }).catch(fail(body));
   }
 
   function timeToMerge(cards) {
@@ -19,12 +164,12 @@
     load("time_to_merge").then(function (r) {
       if (DA.showResult(body, r)) { return; }
       body.appendChild(DA.el("div", { class: "stats" }, [
-        DA.el("div", { class: "stat" }, [DA.el("strong", { text: DA.fmt(r.team.value, "hours") }), DA.el("span", { text: "median" })]),
-        DA.el("div", { class: "stat" }, [DA.el("strong", { text: DA.fmt(r.team.p85, "hours") }), DA.el("span", { text: "85th percentile" })]),
-        DA.el("div", { class: "stat" }, [DA.el("strong", { text: String(r.team.sample) }), DA.el("span", { text: "pull requests" })]),
+        tile(DA.fmt(r.team.value, "hours"), "median"),
+        tile(DA.fmt(r.team.p85, "hours"), "85th percentile"),
+        tile(String(r.team.sample), "pull requests"),
       ]));
       DA.notes(body, r.notes);
-    }).catch(function (e) { DA.message(body, e.message, "error"); });
+    }).catch(fail(body));
   }
 
   function breakdown(cards) {
@@ -34,7 +179,7 @@
       DA.charts.hbars(DA.canvas(body), r.rows.map(function (p) { return p.part; }), r.rows.map(function (p) { return p.median_hours || 0; }), "Median hours");
       DA.table(body, ["Stage", "Median", "Pull requests"], r.rows.map(function (p) { return [p.part, DA.fmt(p.median_hours, "hours"), p.count]; }));
       DA.notes(body, r.notes);
-    }).catch(function (e) { DA.message(body, e.message, "error"); });
+    }).catch(fail(body));
   }
 
   function perPerson(cards, name, title, subtitle) {
@@ -46,15 +191,15 @@
       DA.charts.hbars(DA.canvas(body), rows.map(function (x) { return x.name; }), rows.map(function (x) { return x.value; }), title);
       DA.table(body, ["Person", title], rows.map(function (x) { return [x.name, DA.fmt(x.value, r.unit)]; }));
       DA.notes(body, r.notes);
-    }).catch(function (e) { DA.message(body, e.message, "error"); });
+    }).catch(fail(body));
   }
 
   function waiting(container) {
     DA.api("/api/metrics").then(function (data) {
       container.textContent = "";
-      data.metrics.filter(function (m) { return m.status === "waiting"; }).forEach(function (m) {
+      data.metrics.filter(function (m) { return m.status === "waiting" && ON_CARDS.indexOf(m.name) === -1; }).forEach(function (m) {
         const body = DA.card(container, m.label, m.description);
-        DA.message(body, "Needs " + m.missing.join(" and ") + ".");
+        DA.message(body, "Needs " + m.missing.map(DA.sourceLabel).join(" and ") + ".");
       });
     }).catch(function (e) { DA.message(container, e.message, "error"); });
   }
@@ -62,6 +207,13 @@
   DA.page(function render() {
     const cards = document.getElementById("cards");
     cards.textContent = "";
+    impact(cards);
+    whereItWent(cards);
+    howFast(cards);
+    evidence(cards);
+    impactPerToken(cards);
+    costVsPoints(cards);
+    askVsGenerate(cards);
     throughput(cards);
     timeToMerge(cards);
     breakdown(cards);

@@ -2,7 +2,8 @@
   "use strict";
   const DA = window.DA;
   const STATS = [["prs_merged", "PRs merged"], ["reviews_given", "Reviews given"], ["reviews_assigned", "Reviews assigned"],
-                 ["review_response_rate", "Response rate"], ["time_to_merge", "Median time to merge"], ["commits", "Commits"]];
+                 ["review_response_rate", "Response rate"], ["time_to_merge", "Median time to merge"], ["commits", "Commits"],
+                 ["story_points_done", "Story points done"], ["issues_done", "Issues done"], ["cycle_time", "Median cycle time"]];
 
   function list(container, headers, rows) {
     container.textContent = "";
@@ -26,6 +27,14 @@
       commits.textContent = "";
       DA.charts.bars(DA.canvas(commits), d.commits_weekly.map(function (w) { return w.week; }), d.commits_weekly.map(function (w) { return w.value; }), "Commits");
       DA.table(commits, ["Week starting", "Commits"], d.commits_weekly.map(function (w) { return [w.week, w.value]; }));
+      const issuesCard = document.getElementById("person-issues-card");
+      if (d.issues_done) {
+        issuesCard.classList.remove("hidden");
+        list(document.getElementById("person-issues"), ["Issue", "Type", "Story points", "Credit", "Credited via", "Resolved"],
+          d.issues_done.map(function (i) { return [i.key, i.type, i.points, Math.round(i.share * 100) + "%", i.basis, day(i.resolved_at)]; }));
+      } else {
+        issuesCard.classList.add("hidden");
+      }
       list(document.getElementById("person-pending"), ["#", "Title", "Repository", "Opened"],
         d.reviews_pending.map(function (p) { return [p.number, p.title, p.repository, day(p.created_at)]; }));
       list(document.getElementById("person-prs"), ["#", "Title", "Repository", "State", "Opened", "Merged"],
