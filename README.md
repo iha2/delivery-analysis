@@ -916,6 +916,17 @@ After `delivery-analysis sync`, every team is updated: new committers are added,
 
 The first sync covers the last 90 days. Pull request detail (merge time, review comments and approvals, file counts) is fetched in budgeted batches, newest first, so large repositories fill in over several syncs without hitting Bitbucket's rate limit. `repos list` shows how far detail has got. Assigned reviewers and whether each has approved are stored on every pull request.
 
+### Jira sync
+
+`delivery-analysis` can sync issues, status history, story points and issue links from a Jira Cloud project into the local database.
+
+1. Put an Atlassian API token in `.env` as `ATLASSIAN` and the account email as `ATLASSIAN_EMAIL` (`JIRA_BASE_URL` defaults to `https://keyjira.atlassian.net`; a scoped token needs `https://api.atlassian.com/ex/jira/<cloudId>`).
+2. Select a project (this checks access, picks the story points field by how many issues fill it, and seeds the status map): `uv run delivery-analysis projects add jira:MD`
+3. Map any status the defaults do not know: `uv run delivery-analysis projects map jira:MD "Some Status" in_review` (categories: `todo`, `in_progress`, `in_review`, `done`, `dropped`). A sync stops with the list of unmapped statuses until they are mapped.
+4. Sync: `uv run delivery-analysis sync --source jira`, then `uv run delivery-analysis projects list` to see status, issue count and points field.
+
+`COMPLETED` is done and `DISREGARD` is `dropped` (never counted as done). Cycle time starts at the first `In Progress`. Epics, Initiatives and sub-tasks are stored but flagged `counts_for_impact = 0`. Pull requests are linked to issues when the issue key (for example `MD-12`) appears in the title or branch name; the sync prints "N of M pull requests have an issue key".
+
 ### Local app
 
 `uv run delivery-analysis serve` opens the app on `http://127.0.0.1:8000`. It shows stored data at once and refreshes sources older than `REFRESH_AFTER_MINUTES` (default 60) in the background.
