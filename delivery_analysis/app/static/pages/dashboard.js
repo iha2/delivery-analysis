@@ -20,11 +20,12 @@
     Promise.all([load("story_points_weekly"), load("story_points_done")]).then(function (all) {
       const weekly = all[0], done = all[1];
       if (DA.showResult(body, weekly)) { return; }
-      const total = sum(weekly.rows, "value");
+      // Totals and the trend come from the server (story_points_done's team total); the weekly
+      // sums are only a fallback when that metric is unavailable.
+      const hasTeam = done.status === "ok" && !!done.team;
+      const total = hasTeam && done.team.value !== null ? done.team.value : sum(weekly.rows, "value");
       const completed = sum(weekly.rows, "issues");
       const without = sum(weekly.rows, "unpointed");
-      // The trend is computed on the server (team.trend and team.previous); the browser only shows it.
-      const hasTeam = done.status === "ok" && !!done.team;
       const trend = hasTeam ? done.team.trend : null;
       const previous = hasTeam ? done.team.previous : null;
       body.appendChild(DA.el("div", { class: "stats" }, [
