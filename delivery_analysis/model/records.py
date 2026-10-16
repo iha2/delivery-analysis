@@ -18,7 +18,10 @@ TABLE_KEYS: Dict[str, Tuple[str, ...]] = {
     "link": ("source", "source_id"),
     "property": ("record_kind", "record_id", "name"),
     "token_usage": ("person_id", "day", "model", "purpose", "source"),
-    "token_attribution": ("person_id", "work_item", "day", "method"),
+    "token_attribution": ("person_id", "day", "work_item_source", "work_item_id"),
+    "ticket_credit": ("work_item_source", "work_item_id", "person_id"),
+    "claude_usage_day": ("source", "day", "actor_type", "actor", "model"),
+    "claude_activity_day": ("source", "day", "actor_type", "actor"),
 }
 
 
@@ -52,9 +55,12 @@ class Batch:
     """A unit of work from a connector. `cursor` is stored in the same transaction as the batch.
 
     `cursor` must be a UTC ISO timestamp (`YYYY-MM-DDTHH:MM:SSZ`); the runner treats anything
-    else as "no usable cursor" and does a full sync.
+    else as "no usable cursor" and does a full sync. `replace` lists (table, {column: value})
+    equality deletes that run first, in the same transaction, so a connector can replace a slice
+    (for example one day) instead of only upserting.
     """
 
     records: List[Record]
     raw: List[RawPayload] = field(default_factory=list)
     cursor: Optional[str] = None
+    replace: List[Tuple[str, Dict[str, Any]]] = field(default_factory=list)

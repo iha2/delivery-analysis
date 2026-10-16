@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
-from typing import List, Tuple
+from typing import Any, List, Mapping, Tuple
 
 from delivery_analysis.model.records import TABLE_KEYS, Batch, RawPayload, Record
 
@@ -44,8 +44,27 @@ def upsert_raw(conn: sqlite3.Connection, raw: RawPayload, fetched_at: str) -> No
     )
 
 
+def delete_matching(conn: sqlite3.Connection, table: str, filters: Mapping[str, Any]) -> None:
+    """Delete the rows of `table` whose columns equal `filters`. The caller owns the transaction."""
+    if table not in TABLE_KEYS:
+        raise ValueError(f"unknown table {table!r}")
+    if not filters:
+        raise ValueError(f"a replace for {table} needs at least one column filter")
+    columns = _columns(conn, table)
+    unknown = sorted(name for name in filters if name not in columns)
+    if unknown:
+        raise ValueError(f"{table} has no column(s): {', '.join(unknown)}")
+    names = sorted(filters)
+    conn.execute(
+        f"DELETE FROM {table} WHERE " + " AND ".join(f"{name} = ?" for name in names),
+        [filters[name] for name in names],
+    )
+
+
 def write_batch(conn: sqlite3.Connection, batch: Batch, fetched_at: str) -> int:
     """Write a batch's rows. The caller owns the transaction."""
+    for table, filters in batch.replace:
+        delete_matching(conn, table, filters)
     for record in batch.records:
         upsert_record(conn, record, fetched_at)
     for raw in batch.raw:
