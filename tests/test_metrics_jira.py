@@ -7,6 +7,8 @@ from delivery_analysis.metrics.registry import run_metric
 from delivery_analysis.metrics.window import make_window
 
 WINDOW = make_window(SEPT, TZ, TODAY)
+OUTSIDE = "{n} completed issue(s) are assigned outside this team and are not counted."
+NO_DATE = "{n} done issue(s) have no resolved date and are not counted."
 
 
 def item(conn, sid, assignee, category="done", resolved=None, started=None, points=None, kind="Story", counts="1"):
@@ -44,8 +46,29 @@ def table(result):
 def test_issues_done_counts_done_countable_items_by_resolved_date_for_team_members(seeded):
     result = run(seeded, "issues_done", team_scope(seeded, "t1"))
     assert result["status"] == "ok"
-    assert table(result) == [("Ann Example", 2.0, 2), ("Bob Builder", 1.0, 1), ("Unmapped (1 account)", 1.0, 1)]
+    assert table(result) == [("Ann Example", 2.0, 2), ("Bob Builder", 1.0, 1)]
+    assert result["notes"] == [OUTSIDE.format(n=2)]
+    assert result["team"]["value"] == 3.0
+
+
+def test_without_a_team_the_unassigned_note_counts_every_unassigned_issue(seeded):
+    result = run(seeded, "issues_done", Scope())
     assert result["notes"] == ["1 completed issue(s) have no assignee and are not attributed to anyone."]
+
+
+def test_team_per_person_sum_equals_the_weekly_total(seeded):
+    scope = team_scope(seeded, "t1")
+    people = run(seeded, "issues_done", scope)
+    weekly = run(seeded, "issues_done_weekly", scope)
+    assert sum(row["value"] for row in people["rows"]) == sum(row["value"] for row in weekly["rows"]) == 3
+
+
+def test_done_issues_without_a_resolved_date_are_noted(seeded):
+    item(seeded, "10", "acc-ann", started="2026-09-01T14:00:00Z", points=2)  # done, never resolved
+    item(seeded, "11", "acc-zed", points=2)  # same, but outside the team
+    for name in ("issues_done", "story_points_done"):
+        assert NO_DATE.format(n=1) in run(seeded, name, team_scope(seeded, "t1"))["notes"]
+        assert NO_DATE.format(n=2) in run(seeded, name, Scope())["notes"]
 
 
 def test_without_a_team_other_people_count_and_dropped_and_epics_never_do(seeded):
@@ -62,19 +85,19 @@ def test_a_jira_assignee_resolves_through_the_bitbucket_account(seeded):
 
 def test_cycle_time_is_first_in_progress_to_the_last_completion_and_notes_missing_starts(seeded):
     result = run(seeded, "cycle_time", team_scope(seeded, "t1"))
-    assert table(result) == [("Ann Example", 48.0, 1), ("Bob Builder", 48.0, 1), ("Unmapped (1 account)", 24.0, 1)]
+    assert table(result) == [("Ann Example", 48.0, 1), ("Bob Builder", 48.0, 1)]
     assert result["notes"] == [
         "1 completed issue(s) never entered In Progress, so they have no cycle time.",
-        "1 completed issue(s) have no assignee and are not attributed to anyone.",
+        OUTSIDE.format(n=2),
     ]
 
 
 def test_story_points_done_sums_points_and_counts_the_unpointed(seeded):
     result = run(seeded, "story_points_done", team_scope(seeded, "t1"))
-    assert table(result) == [("Ann Example", 5.0, 1), ("Bob Builder", 3.0, 1), ("Unmapped (1 account)", 8.0, 1)]
+    assert table(result) == [("Ann Example", 5.0, 1), ("Bob Builder", 3.0, 1)]
     assert result["notes"] == [
         "1 completed issue(s) have no story points and are not counted.",
-        "1 completed issue(s) have no assignee and are not attributed to anyone.",
+        OUTSIDE.format(n=2),
     ]
 
 

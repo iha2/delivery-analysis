@@ -9,6 +9,8 @@ from delivery_analysis.metrics.window import Window, hours_between, weekly
 
 UNASSIGNED_NOTE = "{n} completed issue(s) have no assignee and are not attributed to anyone."
 NO_START_NOTE = "{n} completed issue(s) never entered In Progress, so they have no cycle time."
+OUTSIDE_NOTE = "{n} completed issue(s) are assigned outside this team and are not counted."
+NO_DATE_NOTE = "{n} done issue(s) have no resolved date and are not counted."
 NO_POINTS_NOTE = "{n} completed issue(s) have no story points and are not counted."
 
 _DONE_SQL = (
@@ -21,8 +23,12 @@ _DONE_SQL = (
 )
 
 
-def _done(conn: sqlite3.Connection, window: Window) -> List[sqlite3.Row]:
-    return conn.execute(_DONE_SQL, (window.start, window.end)).fetchall()
+_NO_DATE_SQL = (
+    "SELECT w.assignee_account FROM work_item w "
+    "JOIN property c ON c.record_kind = 'work_item' AND c.record_id = w.source_id "
+    "AND c.name = 'counts_for_impact' AND c.value = '1' "
+    "WHERE w.source = 'jira' AND w.status_category = 'done' AND w.resolved_at IS NULL"
+)
 
 
 def _key(account: Optional[str]) -> Optional[str]:
@@ -30,24 +36,64 @@ def _key(account: Optional[str]) -> Optional[str]:
     return actor_key(("jira", account), ("bitbucket", account))
 
 
+def _in_scope(rows: List[sqlite3.Row], conn: sqlite3.Connection, scope: Scope) -> Tuple[List[sqlite3.Row], int]:
+    """Rows kept for the scope, and how many were assigned outside the team.
+
+    Under a team only issues whose assignee resolves to a team member are in scope, so
+    unassigned issues and unmapped assignees are not the team's. Without a team all rows are.
+    """
+    if scope.members is None:
+        return list(rows), 0
+    people = People(conn)
+    kept = []
+    outside = 0
+    for row in rows:
+        key = _key(row["assignee_account"])
+        if key is None:
+            continue
+        if people.resolve(key) in scope.members:
+            kept.append(row)
+        else:
+            outside += 1
+    return kept, outside
+
+
+def _done(conn: sqlite3.Connection, scope: Scope, window: Window) -> Tuple[List[sqlite3.Row], int]:
+    return _in_scope(conn.execute(_DONE_SQL, (window.start, window.end)).fetchall(), conn, scope)
+
+
+def _unresolved(conn: sqlite3.Connection, scope: Scope) -> int:
+    return len(_in_scope(conn.execute(_NO_DATE_SQL).fetchall(), conn, scope)[0])
+
+
+def _notes(obs: Observations, unassigned: int, outside: int, unresolved: int = 0) -> None:
+    if unassigned:
+        obs.notes.append(UNASSIGNED_NOTE.format(n=unassigned))
+    if outside:
+        obs.notes.append(OUTSIDE_NOTE.format(n=outside))
+    if unresolved:
+        obs.notes.append(NO_DATE_NOTE.format(n=unresolved))
+
+
 def issues_done(conn: sqlite3.Connection, scope: Scope, window: Window) -> Observations:
     obs = Observations()
     unassigned = 0
-    for row in _done(conn, window):
+    rows, outside = _done(conn, scope, window)
+    for row in rows:
         key = _key(row["assignee_account"])
         if key is None:
             unassigned += 1
             continue
         obs.add(key)
-    if unassigned:
-        obs.notes.append(UNASSIGNED_NOTE.format(n=unassigned))
+    _notes(obs, unassigned, outside, _unresolved(conn, scope))
     return obs
 
 
 def cycle_time(conn: sqlite3.Connection, scope: Scope, window: Window) -> Observations:
     obs = Observations()
     never_started = unassigned = 0
-    for row in _done(conn, window):
+    rows, outside = _done(conn, scope, window)
+    for row in rows:
         hours = hours_between(row["started_at"], row["resolved_at"])
         if hours is None or hours < 0:
             never_started += 1
@@ -59,15 +105,15 @@ def cycle_time(conn: sqlite3.Connection, scope: Scope, window: Window) -> Observ
         obs.add(key, hours)
     if never_started:
         obs.notes.append(NO_START_NOTE.format(n=never_started))
-    if unassigned:
-        obs.notes.append(UNASSIGNED_NOTE.format(n=unassigned))
+    _notes(obs, unassigned, outside)
     return obs
 
 
 def story_points_done(conn: sqlite3.Connection, scope: Scope, window: Window) -> Observations:
     obs = Observations()
     unpointed = unassigned = 0
-    for row in _done(conn, window):
+    rows, outside = _done(conn, scope, window)
+    for row in rows:
         if row["story_points"] is None:
             unpointed += 1
             continue
@@ -78,8 +124,7 @@ def story_points_done(conn: sqlite3.Connection, scope: Scope, window: Window) ->
         obs.add(key, row["story_points"])
     if unpointed:
         obs.notes.append(NO_POINTS_NOTE.format(n=unpointed))
-    if unassigned:
-        obs.notes.append(UNASSIGNED_NOTE.format(n=unassigned))
+    _notes(obs, unassigned, outside, _unresolved(conn, scope))
     return obs
 
 
@@ -87,13 +132,5 @@ def issues_done_weekly(
     conn: sqlite3.Connection, scope: Scope, window: Window
 ) -> Tuple[List[Dict[str, Any]], List[str]]:
     """Completed issues per local week; under a team only issues of its members count."""
-    people = People(conn) if scope.members is not None else None
-    stamps: List[str] = []
-    for row in _done(conn, window):
-        if people is not None:
-            key = _key(row["assignee_account"])
-            person = people.resolve(key) if key else None
-            if person not in scope.members:
-                continue
-        stamps.append(row["resolved_at"])
-    return weekly(window, stamps), []
+    rows, _ = _done(conn, scope, window)
+    return weekly(window, [row["resolved_at"] for row in rows]), []

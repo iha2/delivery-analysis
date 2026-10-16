@@ -20,7 +20,7 @@ from delivery_analysis.metrics.people import (
 from delivery_analysis.metrics.person import person_detail
 from delivery_analysis.metrics.registry import describe, run_metric
 from delivery_analysis.metrics.window import ISO_Z, Window, make_window
-from delivery_analysis.settings import CREDENTIAL_VARS, credential_status
+from delivery_analysis.settings import CONFIG_VARS, CREDENTIAL_VARS, credential_status
 from delivery_analysis.store.db import connect
 from delivery_analysis.store.repo_selection import (
     add_repo, detail_progress, list_selected, remove_repo, resolve as resolve_selected,
@@ -265,7 +265,7 @@ def build_router(ctx: AppContext) -> APIRouter:
             "window_days": ctx.settings.window_days,
             "overlap_days": ctx.settings.overlap_days,
             "refresh_after_minutes": ctx.settings.refresh_after_minutes,
-            "credentials": credential_status(ctx.environ, CREDENTIAL_VARS),
+            "credentials": credential_status(ctx.environ, CREDENTIAL_VARS + CONFIG_VARS),
             "database": str(ctx.db_path),
         }
 

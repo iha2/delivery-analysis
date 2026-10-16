@@ -130,6 +130,15 @@ def test_settings_show_names_never_values(tmp_path):
     assert TOKEN not in str(body)
 
 
+def test_settings_list_the_atlassian_email_by_name(tmp_path):
+    client, *_ = make(tmp_path, environ={"ATLASSIAN_EMAIL": "me@corp.example"})
+    body = client.get("/api/settings").json()
+    assert body["credentials"]["ATLASSIAN_EMAIL"] is True
+    assert "me@corp.example" not in str(body)
+    other, *_ = make(tmp_path / "b", environ={})
+    assert other.get("/api/settings").json()["credentials"]["ATLASSIAN_EMAIL"] is False
+
+
 @pytest.mark.parametrize("host", ["evil.example", "192.168.1.5:8000", "127.0.0.1.evil.example"])
 def test_requests_for_other_hosts_are_refused(tmp_path, host):
     client, *_ = make(tmp_path)
