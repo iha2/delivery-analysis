@@ -47,7 +47,9 @@ def test_unknown_column_is_rejected(conn):
 
 
 def test_composite_key_tables_keep_distinct_rows(conn):
-    base = {"person_id": "p1", "day": "2026-05-01", "model": "m", "cost_usd": 1.5, "source": "claude"}
+    conn.execute("INSERT INTO person (person_id, display_name, excluded, manual) VALUES ('p1', 'Ada Example', 0, 0)")
+    base = {"person_id": "p1", "day": "2026-05-01", "model": "m", "cost_usd": 1.5, "source": "claude",
+            "purpose_method": "model_mix_v1", "purpose_confidence": "low"}
     up.upsert_record(conn, Record("token_usage", dict(base, purpose="ask")), NOW)
     up.upsert_record(conn, Record("token_usage", dict(base, purpose="generate")), NOW)
     up.upsert_record(conn, Record("token_usage", dict(base, purpose="ask", cost_usd=2.0)), NOW)
