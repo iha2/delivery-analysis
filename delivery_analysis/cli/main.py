@@ -16,6 +16,7 @@ from delivery_analysis.app.server import create_app
 from delivery_analysis.connectors.base import Connector
 from delivery_analysis.connectors.registry import build_connectors
 from delivery_analysis.settings import (
+    CONFIG_VARS,
     CREDENTIAL_VARS,
     EnvFileError,
     Settings,
@@ -26,14 +27,15 @@ from delivery_analysis.settings import (
 )
 from delivery_analysis.store.db import connect, migrate
 from delivery_analysis.store.repo_selection import detail_progress
+from delivery_analysis.cli import projects as projects_cli
 from delivery_analysis.cli import repos as repos_cli
 from delivery_analysis.cli import teams as teams_cli
 from delivery_analysis.sync.service import sync_and_reconcile
 from github_analysis.cli.commands import COMMAND_REGISTRARS
 
 NO_CONNECTORS_MESSAGE = (
-    "No connectors are configured yet. Set BITBUCKET in .env to enable Bitbucket; Jira, "
-    "Confluence, and Claude usage connectors arrive in later specs."
+    "No connectors are configured yet. Set BITBUCKET in .env to enable Bitbucket, or ATLASSIAN "
+    "and ATLASSIAN_EMAIL to enable Jira; Confluence and Claude usage connectors arrive in later specs."
 )
 
 
@@ -48,7 +50,8 @@ def build_parser() -> argparse.ArgumentParser:
             "  sync      Sync configured sources into the local database\n"
             "  doctor    Show which credential variables are present (names only)\n"
             "  teams     Discover, save, import and export team rosters\n"
-            "  repos     Choose which repositories are synced\n\n"
+            "  repos     Choose which repositories are synced\n"
+            "  projects  Choose which Jira projects are synced\n\n"
             "GitHub report commands (need GitHub CLI `gh` authenticated with read access):\n"
             "  analyze   Fetch data from GitHub and write TSV reports\n"
             "  export    Convert TSV reports to Excel\n"
@@ -73,6 +76,7 @@ def build_parser() -> argparse.ArgumentParser:
         register(commands)
     teams_cli.register(commands)
     repos_cli.register(commands)
+    projects_cli.register(commands)
     return parser
 
 
@@ -140,7 +144,7 @@ def _doctor(
     transport: Optional[httpx.BaseTransport] = None,
 ) -> int:
     print(f".env: {env_path} ({'found' if env_path.is_file() else 'not found'})")
-    for name, present in credential_status(environ, CREDENTIAL_VARS).items():
+    for name, present in credential_status(environ, CREDENTIAL_VARS + CONFIG_VARS).items():
         print(f"{name}: {'present' if present else 'missing'}")
     secrets = secret_values(environ)
     active = connectors if connectors is not None else build_connectors(settings, environ, transport)
@@ -187,6 +191,8 @@ def main(
         return teams_cli.run(args, settings)
     if args.command == "repos":
         return repos_cli.run(args, settings, env, transport=transport)
+    if args.command == "projects":
+        return projects_cli.run(args, settings, env, transport=transport)
     if args.command == "serve":
         return _serve(args, settings, env)
     if args.command == "sync":

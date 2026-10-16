@@ -37,6 +37,9 @@ class FieldCatalogue:
     def is_custom(self, field_id: str) -> bool:
         return field_id.startswith("customfield_")
 
+    def has(self, field_id: str) -> bool:
+        return field_id in self._by_id
+
     def property_name(self, field_id: str) -> str:
         """System fields keep their key in snake case; custom fields are `<slug>_<id>`, so two
         fields with the same display name never collide."""

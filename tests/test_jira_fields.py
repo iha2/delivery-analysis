@@ -98,3 +98,8 @@ def test_search_fields_exclude_the_rich_text_fields():
     assert f.SEARCH_FIELDS == ["*all", "-description", "-comment", "-worklog", "-attachment"]
     assert {"description", "comment", "worklog", "attachment"} <= f.EXCLUDED_FIELDS
     assert {"summary", "issuelinks", "parent"} <= f.SKIP_PROPERTY
+
+
+def test_has_tells_whether_the_site_knows_a_field(catalogue):
+    assert catalogue.has("customfield_10004") is True
+    assert catalogue.has("customfield_00000") is False
