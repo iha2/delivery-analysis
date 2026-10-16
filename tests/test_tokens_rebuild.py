@@ -196,3 +196,101 @@ def test_explain_shows_the_day(conn):
     assert data["inputs"]["candidates"][0]["key"] == "MD-1"
     text = "\n".join(explain_lines(data))
     assert "MD-1" in text and "high" in text and "window_single" in text
+
+
+def credit_rows(conn):
+    return [
+        tuple(r) for r in conn.execute(
+            "SELECT w.key, tc.person_id, tc.share, tc.method FROM ticket_credit tc "
+            "JOIN work_item w ON w.source_id = tc.work_item_id ORDER BY w.key, tc.person_id"
+        )
+    ]
+
+
+def test_subtask_work_earns_the_parent_credit_not_the_parent_assignee(conn):
+    w = World(conn)
+    ada, bo = w.person("Ada Example"), w.person("Bo Example")
+    story = w.ticket("MD-1", points=5, assignee=ada)
+    sub = w.ticket("MD-2", assignee=bo, kind="Sub-task", parent=story).in_progress("2026-03-02")
+    pr = w.pull_request(bo, created="2026-03-02", links=[sub])
+    w.commit(bo, "2026-03-02", pr=pr)
+    story.in_progress("2026-03-02").completed("2026-03-06")  # Ada only moves the story
+    w.usage(bo, "2026-03-02", 3000)
+    rebuild(conn, TODAY)
+    story_credit = [r for r in credit_rows(conn) if r[0] == "MD-1"]
+    shares = {p: s for _, p, s, _ in story_credit}
+    assert shares["p-bo"] > shares["p-ada"] and round(sum(shares.values()), 6) == 1.0
+
+
+def test_story_with_only_subtask_evidence_credits_the_subtask_worker(conn):
+    w = World(conn)
+    ada, bo = w.person("Ada Example"), w.person("Bo Example")
+    story = w.ticket("MD-1", points=5, assignee=ada)
+    sub = w.ticket("MD-2", assignee=bo, kind="Sub-task", parent=story)
+    pr = w.pull_request(bo, created="2026-03-02", links=[sub])
+    w.commit(bo, "2026-03-02", pr=pr)
+    rebuild(conn, TODAY)
+    assert [r for r in credit_rows(conn) if r[0] == "MD-1"] == [("MD-1", "p-bo", 1.0, "evidence_share")]
+
+
+def test_story_without_any_evidence_still_falls_back_to_its_assignee(conn):
+    w = World(conn)
+    ada, bo = w.person("Ada Example"), w.person("Bo Example")
+    story = w.ticket("MD-1", points=5, assignee=ada)
+    w.ticket("MD-2", assignee=bo, kind="Sub-task", parent=story)
+    rebuild(conn, TODAY)
+    assert [r for r in credit_rows(conn) if r[0] == "MD-1"] == [("MD-1", "p-ada", 1.0, "assignee")]
+
+
+def test_epics_stay_excluded_when_a_project_lists_other_excluded_types(conn):
+    w = World(conn)
+    conn.execute("UPDATE project_selection SET excluded_types = ''")
+    ada = w.person("Ada Example")
+    w.ticket("MD-9", assignee=ada, kind="Epic").in_progress("2026-03-02")
+    w.usage(ada, "2026-03-02", 200)
+    rebuild(conn, TODAY)
+    assert rows(conn) == [("2026-03-02", None, 2.0, "unattributed", None, "no_active_ticket")]
+
+
+def test_usage_reconciliation_check_catches_a_row_that_disagrees_with_the_source(conn):
+    from delivery_analysis.tokens.accounts import AccountMap
+    from delivery_analysis.tokens.usage import check_usage_reconciles, derive_usage, write_usage
+    w, ada, t1, pr = single(conn)
+    w.usage(ada, "2026-03-03", 1000)
+    accounts = AccountMap(conn)
+    usage = derive_usage(conn, accounts)
+    write_usage(conn, usage.rows)
+    check_usage_reconciles(conn, accounts)  # consistent: no error
+    conn.execute("UPDATE token_usage SET cost_usd = cost_usd + 0.5")
+    with pytest.raises(RebuildError, match="does not match"):
+        check_usage_reconciles(conn, accounts)
+
+
+def test_rebuild_rolls_back_when_derived_usage_loses_cost(conn, monkeypatch):
+    w, ada, t1, pr = single(conn)
+    w.usage(ada, "2026-03-03", 1000)
+    rebuild(conn, TODAY)
+    real = rebuild_module.derive_usage
+
+    def lossy(*args, **kwargs):
+        result = real(*args, **kwargs)
+        result.rows[:] = [r.__class__(**{**r.__dict__, "cost_usd": r.cost_usd - 1.0}) for r in result.rows]
+        return result
+
+    monkeypatch.setattr(rebuild_module, "derive_usage", lossy)
+    with pytest.raises(RebuildError, match="does not match"):
+        rebuild(conn, TODAY)
+    assert conn.execute("SELECT cost_usd FROM token_usage").fetchone()[0] == 10.0
+
+
+def test_a_negative_day_is_one_adjustment_row_and_a_zero_day_writes_nothing(conn):
+    w, ada, t1, pr = single(conn)
+    w.usage(ada, "2026-03-03", 1000)
+    w.usage(ada, "2026-03-04", -250)
+    w.usage(ada, "2026-03-05", 0)
+    summary = rebuild(conn, TODAY)
+    assert rows(conn) == [
+        ("2026-03-03", "MD-1", 10.0, "window_single", "high", None),
+        ("2026-03-04", None, -2.5, "unattributed", None, "adjustment"),
+    ]
+    assert summary.unattributed_usd == {"adjustment": -2.5}

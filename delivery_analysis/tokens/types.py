@@ -51,3 +51,8 @@ class TicketInfo:
     resolved_at: Optional[str]
     transitions: List[Tuple[str, Optional[str]]] = field(default_factory=list)  # (UTC time, category)
     merges: List[str] = field(default_factory=list)  # merged_at of linked pull requests
+    parent: Optional[TicketKey] = None  # the parent issue, for a sub-task
+
+
+class RebuildError(RuntimeError):
+    """The rebuild found an inconsistency and changed nothing."""

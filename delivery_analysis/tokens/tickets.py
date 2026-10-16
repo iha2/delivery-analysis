@@ -12,7 +12,9 @@ DEFAULT_EXCLUDED_TYPES = frozenset({"Epic", "Initiative"})
 def _excluded_types(conn: sqlite3.Connection) -> Dict[str, Set[str]]:
     out: Dict[str, Set[str]] = {}
     for row in conn.execute("SELECT project_key, excluded_types FROM project_selection WHERE source = 'jira'"):
-        out[row["project_key"]] = {t.strip() for t in (row["excluded_types"] or "").split(",") if t.strip()}
+        out[row["project_key"]] = set(DEFAULT_EXCLUDED_TYPES) | {
+            t.strip() for t in (row["excluded_types"] or "").split(",") if t.strip()
+        }
     return out
 
 
@@ -42,7 +44,7 @@ def load_tickets(conn: sqlite3.Connection, accounts: AccountMap) -> Dict[TicketK
             issue_key=row["key"] or row["source_id"],
             project=project,
             type=kind,
-            eligible=kind not in excluded.get(project, DEFAULT_EXCLUDED_TYPES),
+            eligible=kind not in excluded.get(project, set(DEFAULT_EXCLUDED_TYPES)),
             status_category=row["status_category"],
             assignee_person=accounts.person("jira", row["assignee_account"]),
             story_points=row["story_points"],
@@ -66,4 +68,10 @@ def load_tickets(conn: sqlite3.Connection, accounts: AccountMap) -> Dict[TicketK
         info = tickets.get(("jira", row["to_id"]))
         if info is not None:
             info.merges.append(row["merged_at"])
+    for row in conn.execute(
+        "SELECT from_id, to_id FROM link WHERE kind = 'parent' AND from_kind = 'work_item' AND to_kind = 'work_item'"
+    ):
+        info = tickets.get(("jira", row["from_id"]))
+        if info is not None and ("jira", row["to_id"]) in tickets:
+            info.parent = ("jira", row["to_id"])
     return tickets

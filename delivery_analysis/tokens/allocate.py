@@ -23,8 +23,11 @@ def allocate(
     config: AttributionConfig = DEFAULT_CONFIG,
 ) -> List[Allocation]:
     """Split one person-day's cost: weight = prior + evidence, which is an equal split without evidence."""
-    if cost_usd <= 0:
+    if cost_usd == 0:
         return []
+    if cost_usd < 0:
+        # A refund or correction: keep the signed amount in one unattributed row so totals reconcile.
+        return [Allocation(None, round(cost_usd, 6), None, None, "unattributed", None, "adjustment")]
     total_cost = round(cost_usd, 6)
     if not candidates:
         reason = "untracked_work" if has_untracked_commits else "no_active_ticket"

@@ -10,17 +10,13 @@ from delivery_analysis.tokens.accounts import AccountMap
 from delivery_analysis.tokens.allocate import allocate
 from delivery_analysis.tokens.candidates import active_intervals, candidates_for_day
 from delivery_analysis.tokens.config import ALGO_VERSION, DEFAULT_CONFIG, AttributionConfig
-from delivery_analysis.tokens.credit import Credit, compute_credit
+from delivery_analysis.tokens.credit import Credit, compute_credit, roll_up_evidence
 from delivery_analysis.tokens.evidence import load_evidence
 from delivery_analysis.tokens.tickets import load_tickets
-from delivery_analysis.tokens.types import TicketKey
-from delivery_analysis.tokens.usage import PersonUsage, derive_usage, write_usage
+from delivery_analysis.tokens.types import RebuildError, TicketKey
+from delivery_analysis.tokens.usage import PersonUsage, check_usage_reconciles, derive_usage, write_usage
 
 CENT = 0.01
-
-
-class RebuildError(RuntimeError):
-    """The rebuild found an inconsistency and changed nothing."""
 
 
 @dataclass
@@ -74,6 +70,7 @@ def _ticket_text(ticket: TicketKey) -> str:
 
 def _write(
     conn: sqlite3.Connection,
+    accounts: AccountMap,
     usage_rows: Sequence[PersonUsage],
     attribution: Sequence[Dict[str, Any]],
     credits: Sequence[Credit],
@@ -83,6 +80,7 @@ def _write(
         for table in ("token_attribution", "ticket_credit", "token_usage"):
             conn.execute(f"DELETE FROM {table}")
         write_usage(conn, usage_rows)
+        check_usage_reconciles(conn, accounts)
         conn.executemany(
             "INSERT INTO token_attribution (person_id, day, work_item_source, work_item_id, cost_usd, weight, "
             "evidence, method, confidence, reason, inputs, algo_version, computed_at) VALUES (:person_id, :day, "
@@ -177,11 +175,14 @@ def rebuild(
         if day_cost:
             days = sorted(day for _, day in day_cost)
             summary.first_day, summary.last_day = days[0].isoformat(), days[-1].isoformat()
-        totals = {key: value for key, value in evidence.totals().items() if key[0] in eligible}
+        parents = {key: info.parent for key, info in tickets.items() if info.parent in eligible}
+        totals = roll_up_evidence(
+            {key: value for key, value in evidence.totals().items() if key[0] in eligible}, parents
+        )
         credits, _ = compute_credit(totals, {k: i.assignee_person for k, i in tickets.items() if i.eligible})
         credited = {c.ticket for c in credits}
         done = [i for i in tickets.values() if i.counts_for_impact and i.status_category == "done"]
         summary.tickets_without_points = sum(1 for i in done if i.story_points is None)
         summary.tickets_without_credit = sum(1 for i in done if i.key not in credited)
-    _write(conn, usage.rows, attribution, credits)
+    _write(conn, accounts, usage.rows, attribution, credits)
     return summary

@@ -43,3 +43,8 @@ def test_equal_split_when_no_candidate_has_evidence_and_the_sum_is_exact():
 def test_an_assignee_only_candidate_is_low_even_in_an_evidence_split():
     rows = allocate(10.0, [Candidate(T1, 1.0, True), Candidate(T2, 0.0, False)], False)
     assert [(r.ticket, r.confidence) for r in rows] == [(T1, "medium"), (T2, "low")]
+
+
+def test_negative_cost_is_one_signed_adjustment_row():
+    assert shape(allocate(-2.5, [Candidate(T1, 1.0, True)], False)) == [
+        (None, -2.5, "unattributed", None, "adjustment")]

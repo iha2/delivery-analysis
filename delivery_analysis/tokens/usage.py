@@ -6,6 +6,7 @@ from typing import Dict, List, Optional, Sequence, Tuple
 
 from delivery_analysis.tokens.accounts import AccountMap
 from delivery_analysis.tokens.config import DEFAULT_CONFIG, AttributionConfig
+from delivery_analysis.tokens.types import RebuildError
 
 
 @dataclass(frozen=True)
@@ -81,3 +82,22 @@ def write_usage(conn: sqlite3.Connection, rows: Sequence[PersonUsage]) -> None:
         [(r.person_id, r.day, r.model, r.purpose, r.cost_usd, r.total_tokens, r.source, r.purpose_method,
           r.purpose_confidence) for r in rows],
     )
+
+
+def check_usage_reconciles(conn: sqlite3.Connection, accounts: AccountMap) -> None:
+    """Per person-day, token_usage cost must equal the claude_usage_day cost of that person's mapped actors."""
+    expected: Dict[Tuple[str, str], float] = {}
+    for row in conn.execute("SELECT day, actor_type, actor, cost_usd FROM claude_usage_day"):
+        person = accounts.person(row["actor_type"], row["actor"])
+        if person is not None:
+            expected[(person, row["day"])] = expected.get((person, row["day"]), 0.0) + row["cost_usd"]
+    stored: Dict[Tuple[str, str], float] = {}
+    for row in conn.execute("SELECT person_id, day, SUM(cost_usd) AS cost FROM token_usage GROUP BY person_id, day"):
+        stored[(row["person_id"], row["day"])] = row["cost"]
+    for (person, day) in sorted(set(expected) | set(stored)):
+        want, got = expected.get((person, day), 0.0), stored.get((person, day), 0.0)
+        if abs(want - got) > 0.005:
+            raise RebuildError(
+                f"Stored usage for {person} on {day} does not match the Claude data "
+                f"(${got:.2f} stored, ${want:.2f} reported); nothing was changed."
+            )
