@@ -5,9 +5,12 @@ from typing import Dict, List
 from delivery_analysis.metrics import bitbucket as bb
 from delivery_analysis.metrics import impact as im
 from delivery_analysis.metrics import jira as jr
+from delivery_analysis.metrics import tokens as tk
 from delivery_analysis.metrics.registry import PER_PERSON, TEAM_BREAKDOWN, TEAM_SERIES, Metric
 
 BB = ("bitbucket",)
+CU = ("claude_usage",)
+JC = ("jira", "claude_usage")
 
 METRICS: List[Metric] = [
     Metric("prs_merged", "PRs merged", "count", PER_PERSON, BB, compute=bb.prs_merged,
@@ -60,14 +63,28 @@ METRICS: List[Metric] = [
     Metric("prs_linked_weekly", "PRs linked to an issue by week", "count", TEAM_SERIES, ("bitbucket", "links"),
            compute=im.prs_linked_weekly,
            description="Merged pull requests per week, split by whether an issue key links them."),
-    Metric("cost_spent", "Claude cost", "usd", PER_PERSON, ("claude_usage",), better="neutral",
-           description="Claude cost in USD."),
-    Metric("story_points_per_dollar", "Impact per token (cost proxy)", "points_per_usd", PER_PERSON,
-           ("jira", "claude_usage"), description="Story points done per dollar of attributed Claude cost."),
-    Metric("unattributed_cost_share", "Unattributed cost share", "ratio", PER_PERSON, ("claude_usage",),
-           better="lower", aggregate="mean", description="Share of cost not attributed to any ticket."),
-    Metric("ask_generate_ratio", "Ask to generate ratio", "ratio", PER_PERSON, ("claude_usage",),
-           better="neutral", aggregate="mean", description="Asking cost relative to generating cost."),
+    Metric("cost_spent", "Claude cost", "usd", PER_PERSON, CU, better="neutral", sample_noun="days with cost",
+           compute=tk.cost_spent, description="Claude Code cost in USD (the API's estimate), by UTC day."),
+    Metric("story_points_per_dollar", "Impact per token (cost proxy)", "points_per_usd", PER_PERSON, JC,
+           aggregate="ratio", min_sample=3, min_denominator=20.0, sample_noun="completed tickets",
+           compute=tk.story_points_per_dollar,
+           description="Credited story points of tickets completed in the window per dollar of Claude cost "
+                       "attributed to them."),
+    Metric("story_points_per_dollar_all_in", "Impact per token, all-in", "points_per_usd", PER_PERSON, JC,
+           aggregate="ratio", min_sample=3, min_denominator=20.0, sample_noun="completed tickets",
+           compute=tk.story_points_per_dollar_all_in,
+           description="Credited story points per dollar of all Claude cost in the window, attributed or not."),
+    Metric("story_points_per_dollar_weekly", "Impact per token by week", "points_per_usd", TEAM_SERIES, JC,
+           compute=tk.story_points_per_dollar_weekly,
+           description="Story points per attributed dollar, by completion week."),
+    Metric("unattributed_cost_share", "Unattributed cost share", "ratio", PER_PERSON, CU, better="lower",
+           aggregate="ratio", sample_noun="days with cost", compute=tk.unattributed_cost_share,
+           description="Share of cost not attributed to any ticket."),
+    Metric("ask_generate_ratio", "Ask to generate ratio (coarse)", "multiple", PER_PERSON, CU, better="neutral",
+           aggregate="ratio", sample_noun="days with cost", compute=tk.ask_generate_ratio,
+           description="Asking cost relative to generating cost; a coarse v1 proxy shown as context only."),
+    Metric("cost_by_purpose_weekly", "Claude cost by purpose by week", "usd", TEAM_SERIES, CU, better="neutral",
+           compute=tk.cost_by_purpose_weekly, description="Ask, generate and unclassified cost per UTC week."),
     Metric("prs_with_issue_link", "PRs with an issue link", "ratio", PER_PERSON, ("bitbucket", "links"),
            aggregate="mean", compute=im.prs_with_issue_link,
            description="Share of merged pull requests linked to a Jira issue by key in the title or branch."),

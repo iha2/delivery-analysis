@@ -198,11 +198,10 @@ def test_the_new_metrics_wait_for_their_sources(conn):
 
 def test_the_cost_cards_use_existing_waiting_stubs_and_no_new_names_are_registered(seeded):
     for name, missing in (
-        ("story_points_per_dollar", ["jira", "claude_usage"]),
+        ("story_points_per_dollar", ["claude_usage"]),  # computed now; this seed has Jira data
         ("ask_generate_ratio", ["claude_usage"]),
     ):
         metric = BY_NAME[name]
-        assert metric.compute is None
         result = run_metric(seeded, metric, Scope(), WINDOW)
         assert result["status"] == "waiting" and result["missing"] == missing
     assert "impact_per_dollar_weekly" not in BY_NAME and "cost_vs_points" not in BY_NAME

@@ -116,4 +116,3 @@ def test_the_catalog_wires_the_four_jira_metrics_and_they_wait_without_jira_data
         assert BY_NAME[name].compute is not None
     empty = run_metric(conn, BY_NAME["issues_done"], Scope(), WINDOW)
     assert empty["status"] == "waiting" and empty["missing"] == ["jira"]
-    assert BY_NAME["story_points_per_dollar"].compute is None
