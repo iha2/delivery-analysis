@@ -7,6 +7,8 @@ import httpx
 from delivery_analysis.connectors.base import Connector
 from delivery_analysis.connectors.bitbucket.client import BitbucketClient
 from delivery_analysis.connectors.bitbucket.connector import BitbucketConnector
+from delivery_analysis.connectors.jira.client import JiraClient, base_url_from, jira_credentials
+from delivery_analysis.connectors.jira.connector import JiraConnector
 from delivery_analysis.settings import Settings
 
 
@@ -15,7 +17,7 @@ def build_connectors(
     environ: Mapping[str, str],
     transport: Optional[httpx.BaseTransport] = None,
 ) -> List[Connector]:
-    """Jira, Confluence, and Claude usage connectors are added by later specs."""
+    """Confluence and Claude usage connectors are added by later specs."""
     connectors: List[Connector] = []
     token = (environ.get("BITBUCKET") or "").strip()
     if token:
@@ -28,4 +30,8 @@ def build_connectors(
                 window_days=settings.window_days,
             )
         )
+    if (environ.get("ATLASSIAN") or "").strip():
+        email, secret = jira_credentials(environ)
+        jira_client = JiraClient(email, secret, base_url=base_url_from(environ), transport=transport)
+        connectors.append(JiraConnector(jira_client, settings.db_path, window_days=settings.window_days))
     return connectors
