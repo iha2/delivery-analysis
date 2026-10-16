@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Dict, List
 
 from delivery_analysis.metrics import bitbucket as bb
+from delivery_analysis.metrics import jira as jr
 from delivery_analysis.metrics.registry import PER_PERSON, TEAM_BREAKDOWN, TEAM_SERIES, Metric
 
 BB = ("bitbucket",)
@@ -32,14 +33,14 @@ METRICS: List[Metric] = [
            compute=bb.lead_time_breakdown,
            description="Median hours waiting for review, in review, and from approval to merge."),
     # Registered now, computed by later specs (Jira, token usage, linking, Confluence).
-    Metric("issues_done", "Issues done", "count", PER_PERSON, ("jira",),
-           description="Issues that reached COMPLETED."),
+    Metric("issues_done", "Issues done", "count", PER_PERSON, ("jira",), compute=jr.issues_done,
+           description="Issues that reached COMPLETED, excluding Epics, Initiatives and sub-tasks."),
     Metric("issues_done_weekly", "Issues done by week", "count", TEAM_SERIES, ("jira",),
-           description="Issues completed per week."),
+           compute=jr.issues_done_weekly, description="Issues completed per week."),
     Metric("cycle_time", "Cycle time", "hours", PER_PERSON, ("jira",), better="lower", aggregate="median",
-           description="First In Progress to COMPLETED."),
+           compute=jr.cycle_time, description="First In Progress to COMPLETED."),
     Metric("story_points_done", "Story points done", "points", PER_PERSON, ("jira",),
-           description="Story points of completed issues."),
+           compute=jr.story_points_done, description="Story points of completed issues."),
     Metric("cost_spent", "Claude cost", "usd", PER_PERSON, ("claude_usage",), better="neutral",
            description="Claude cost in USD."),
     Metric("story_points_per_dollar", "Impact per token (cost proxy)", "points_per_usd", PER_PERSON,
