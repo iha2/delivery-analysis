@@ -13,6 +13,11 @@ CREDIT_NOTE = (
     "{rest} to the assignee because no pull request is linked."
 )
 
+CLAUDE_CREDIT_NOTE = (
+    "{ev} of {n} completed issue(s) were credited by Claude-era evidence, {pr} to the authors of their linked "
+    "pull requests and {rest} to the assignee because no pull request is linked."
+)
+
 _DONE_SQL = (
     "SELECT w.source_id, w.key, w.type, w.assignee_account, w.started_at, w.resolved_at, w.story_points "
     "FROM work_item w "
@@ -46,12 +51,14 @@ class Credit:
 
     `issues` are the countable issues completed in the window, oldest first. `shares` maps an issue id to
     `{actor_key: share}` (shares of one issue sum to 1; an empty dict means nobody can be credited).
-    `by_pr` holds the issues credited by pull request evidence rather than by assignee.
+    `by_pr` holds the issues credited by pull request evidence rather than by assignee; `by_evidence` those
+    credited by the Claude-era `ticket_credit` shares (keyed `person:<id>`).
     """
 
     issues: List[sqlite3.Row] = field(default_factory=list)
     shares: Dict[str, Dict[str, float]] = field(default_factory=dict)
     by_pr: Set[str] = field(default_factory=set)
+    by_evidence: Set[str] = field(default_factory=set)
 
 
 def completed_issues(conn: sqlite3.Connection, window: Window) -> List[sqlite3.Row]:
@@ -59,10 +66,14 @@ def completed_issues(conn: sqlite3.Connection, window: Window) -> List[sqlite3.R
 
 
 def credit_for(conn: sqlite3.Connection, window: Window) -> Credit:
-    """Credit by the authors of linked pull requests, split by their share of those pull requests;
-    the assignee when no usable pull request is linked. Spec 4's `ticket_credit` replaces this."""
+    """One credit rule. Spec 4's `ticket_credit` shares win when the issue has any; otherwise the authors of
+    linked pull requests, split by their share of those pull requests; otherwise the assignee."""
     issues = completed_issues(conn, window)
     wanted = {row["source_id"] for row in issues}
+    evidence: Dict[str, Dict[str, float]] = {}
+    for row in conn.execute("SELECT work_item_source, work_item_id, person_id, share FROM ticket_credit"):
+        if row["work_item_source"] == "jira" and row["work_item_id"] in wanted:
+            evidence.setdefault(row["work_item_id"], {})[f"person:{row['person_id']}"] = row["share"]
     authors: Dict[str, Counter] = {}
     for row in conn.execute(_PR_AUTHORS_SQL):
         if row["issue_id"] in wanted:
@@ -70,6 +81,10 @@ def credit_for(conn: sqlite3.Connection, window: Window) -> Credit:
     credit = Credit(issues=issues)
     for row in issues:
         issue_id = row["source_id"]
+        if evidence.get(issue_id):
+            credit.shares[issue_id] = evidence[issue_id]
+            credit.by_evidence.add(issue_id)
+            continue
         counts = authors.get(issue_id)
         if counts:
             total = sum(counts.values())
@@ -87,11 +102,14 @@ def first_merges(conn: sqlite3.Connection) -> Dict[str, str]:
 
 
 def credit_note(credit: Credit) -> Optional[str]:
-    """Explains how much was credited by pull request evidence; nothing to say when none was."""
-    if not credit.by_pr:
+    """Explains how much was credited by evidence rather than by assignee; nothing to say when none was."""
+    if not credit.by_pr and not credit.by_evidence:
         return None
     credited = [row for row in credit.issues if credit.shares.get(row["source_id"])]
-    return CREDIT_NOTE.format(pr=len(credit.by_pr), n=len(credited), rest=len(credited) - len(credit.by_pr))
+    pr, ev, n = len(credit.by_pr), len(credit.by_evidence), len(credited)
+    if not ev:
+        return CREDIT_NOTE.format(pr=pr, n=n, rest=n - pr)
+    return CLAUDE_CREDIT_NOTE.format(ev=ev, pr=pr, n=n, rest=n - pr - ev)
 
 
 @dataclass

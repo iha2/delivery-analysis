@@ -135,6 +135,10 @@ def _cohort_pairs(conn: sqlite3.Connection, window: Window, all_in: bool, config
         for person in cohort.people(ticket):
             share = cohort.credit.get(ticket, {}).get(person, 0.0)
             cost = 0.0 if all_in else cohort.cost.get((ticket, person), 0.0)
+            if share <= 0:
+                # Cost without credited points still counts as spend, but not as a completed ticket.
+                obs.add_pair(_key(person), 0.0, cost, sample=0)
+                continue
             obs.add_pair(_key(person), info["points"] * share, cost)
             tickets[person] = tickets.get(person, 0) + 1
             mine = levels.setdefault(person, {})

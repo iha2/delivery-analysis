@@ -26,6 +26,7 @@ def build(conn):
     w.usage(ada, "2026-03-02", 1000)
     t1.completed("2026-03-03")
     rebuild(conn, date(2026, 3, 20))
+    return w, ada, eve
 
 
 def test_ticket_rows_carry_cost_credit_and_pull_request_evidence(conn):
@@ -63,3 +64,31 @@ def test_the_tickets_endpoint(tmp_path):
     response = client.get("/api/tickets", params={"window": "month:2026-03", "person": "p-ada"})
     assert response.status_code == 200 and response.json()["tickets"][0]["key"] == "MD-1"
     assert client.get("/api/tickets", params={"team": "nope"}).status_code == 404
+
+
+def test_a_team_sees_only_its_members_cost_levels_and_people_on_a_shared_ticket(conn):
+    import pytest
+    from delivery_analysis.metrics.people import team_scope
+    world, ada, eve = build(conn)
+    world.team("t-eve", "Eve team", [eve])
+    scope = team_scope(conn, "t-eve")
+    (row,) = ticket_costs(conn, scope, MARCH)["tickets"]  # eve is a member, ada is not
+    assert [p["person_id"] for p in row["people"]] == ["p-eve"]
+    assert (row["cost_usd"], row["points_per_usd"], row["confidence"]) == (0.0, None, None)  # ada's $10 is hidden
+    with pytest.raises(ValueError, match="not a member"):
+        ticket_costs(conn, scope, MARCH, "p-ada")
+
+
+def test_the_tickets_endpoint_refuses_a_person_outside_the_team(tmp_path):
+    path = tmp_path / "d.sqlite"
+    conn = db.connect(path)
+    db.migrate(conn)
+    world, ada, eve = build(conn)
+    world.team("t-eve", "Eve team", [eve])
+    conn.commit()
+    conn.close()
+    app = create_app(path, settings=Settings(db_path=path), environ={}, worker=RefreshWorker(lambda s, f: "ok"),
+                     clock=lambda: datetime(2026, 10, 15, 16, 0, tzinfo=timezone.utc), port=8000)
+    client = TestClient(app, base_url="http://127.0.0.1")
+    response = client.get("/api/tickets", params={"team": "t-eve", "window": "month:2026-03", "person": "p-ada"})
+    assert response.status_code == 400 and "not a member" in response.json()["detail"]

@@ -17,7 +17,7 @@ SOURCE_PROBES = {
     "bitbucket": "SELECT 1 FROM change_request WHERE source = 'bitbucket' "
     "UNION ALL SELECT 1 FROM vcs_commit WHERE source = 'bitbucket' LIMIT 1",
     "jira": "SELECT 1 FROM work_item LIMIT 1",
-    "claude_usage": "SELECT 1 FROM token_usage LIMIT 1",
+    "claude_usage": "SELECT 1 FROM claude_usage_day LIMIT 1",
     "links": "SELECT 1 FROM link LIMIT 1",
     "confluence": "SELECT 1 FROM document LIMIT 1",
 }

@@ -153,3 +153,16 @@ def test_mapping_an_email_stores_lower_case_and_the_commits_metric_resolves_it(c
     result = run_metric(conn, BY_NAME["commits"], pp.team_scope(conn, "t1"), make_window(SEPT, TZ, TODAY))
     assert [(r["name"], r["value"]) for r in result["rows"]][0] == ("Ann Example", 3.0)
     assert _email_rows(conn) == []
+
+
+def test_an_unmapped_claude_actor_carries_its_cost(conn):
+    seed(conn)
+    for day, cost in (("2026-09-01", 1.25), ("2026-09-02", 2.0)):
+        conn.execute(
+            "INSERT INTO claude_usage_day (source, day, actor_type, actor, model, cost_usd, input_tokens, "
+            "output_tokens, cache_read_tokens, cache_creation_tokens, fetched_at) "
+            "VALUES ('claude_code_analytics', ?, 'email', 'ghost@corp.example', 'm', ?, 1, 0, 0, 0, ?)",
+            (day, cost, NOW))
+    ghost = next(r for r in pp.unmapped_accounts(conn) if r["account"] == "ghost@corp.example")
+    assert ghost["cost_usd"] == 3.25 and ghost["activity"] == 2
+    assert "cost_usd" not in next(r for r in pp.unmapped_accounts(conn) if r["account"] == "acc-zed")

@@ -93,16 +93,16 @@ class People:
 
 
 _UNMAPPED_SQL = """
-SELECT source, account, COUNT(*) AS activity FROM (
-    SELECT source, author_account AS account FROM change_request
-    UNION ALL SELECT source, actor_account FROM change_event
-    UNION ALL SELECT source, author_account FROM vcs_commit
-    UNION ALL SELECT 'email', lower(trim(author_email)) FROM vcs_commit
+SELECT source, account, COUNT(*) AS activity, SUM(cost) AS cost FROM (
+    SELECT source, author_account AS account, 0.0 AS cost FROM change_request
+    UNION ALL SELECT source, actor_account, 0.0 FROM change_event
+    UNION ALL SELECT source, author_account, 0.0 FROM vcs_commit
+    UNION ALL SELECT 'email', lower(trim(author_email)), 0.0 FROM vcs_commit
         WHERE (author_account IS NULL OR author_account = '')
           AND author_email IS NOT NULL AND author_email != ''
-    UNION ALL SELECT 'bitbucket', substr(name, 10) FROM property
+    UNION ALL SELECT 'bitbucket', substr(name, 10), 0.0 FROM property
         WHERE record_kind = 'change_request' AND name LIKE 'reviewer:%'
-    UNION ALL SELECT actor_type, actor FROM claude_usage_day
+    UNION ALL SELECT actor_type, actor, cost_usd FROM claude_usage_day
 ) a
 WHERE account IS NOT NULL AND account != ''
   AND NOT EXISTS (
@@ -179,15 +179,18 @@ def _name_hint(conn: sqlite3.Connection, source: str, account: str) -> Optional[
 
 def unmapped_accounts(conn: sqlite3.Connection, limit: int = 200) -> List[Dict[str, Any]]:
     """Accounts with activity and no person, most active first, with a display-name hint."""
-    return [
-        {
+    out = []
+    for row in conn.execute(_UNMAPPED_SQL, (limit,)).fetchall():
+        item: Dict[str, Any] = {
             "source": row["source"],
             "account": row["account"],
             "activity": row["activity"],
             "name_hint": _name_hint(conn, row["source"], row["account"]),
         }
-        for row in conn.execute(_UNMAPPED_SQL, (limit,)).fetchall()
-    ]
+        if row["cost"]:
+            item["cost_usd"] = round(row["cost"], 2)  # Claude spend of the account; activity stays a count
+        out.append(item)
+    return out
 
 
 def set_member_status(conn: sqlite3.Connection, team_id: str, person_id: str, status: str, now: str) -> None:

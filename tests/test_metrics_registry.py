@@ -159,3 +159,14 @@ def test_trend_is_kept_when_history_is_long_enough(conn):
     assert result["team"]["trend"] == 0.5
     assert result["rows"][0]["trend"] == 1.0
     assert not any("Not enough history" in note for note in result["notes"])
+
+
+def test_cost_spent_is_not_waiting_when_only_claude_usage_days_exist(conn):
+    from delivery_analysis.metrics.catalog import BY_NAME
+    from delivery_analysis.metrics.registry import missing_sources
+    conn.execute(
+        "INSERT INTO claude_usage_day (source, day, actor_type, actor, model, cost_usd, input_tokens, "
+        "output_tokens, cache_read_tokens, cache_creation_tokens, fetched_at) "
+        "VALUES ('claude_code_analytics', '2026-03-02', 'claude_api_key', 'key-1', 'm', 1.0, 1, 0, 0, 0, "
+        "'2026-03-21T00:00:00Z')")
+    assert missing_sources(conn, BY_NAME["cost_spent"]) == []

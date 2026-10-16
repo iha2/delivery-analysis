@@ -64,13 +64,17 @@ def ticket_costs(
     config: AttributionConfig = DEFAULT_CONFIG,
 ) -> Dict[str, Any]:
     """Completed tickets in the window with attributed cost, credit and their pull-request evidence."""
+    if person_id is not None and scope.members is not None and person_id not in scope.members:
+        raise ValueError(f"Person {person_id!r} is not a member of this team.")
     cohort = load_cohort(conn, window)
     people = People(conn)
     tickets: List[Dict[str, Any]] = []
     for key, info in sorted(cohort.tickets.items(), key=lambda item: item[1]["issue_key"]):
         names = cohort.people(key)
-        if scope.members is not None and not any(p in scope.members for p in names):
-            continue
+        if scope.members is not None:
+            names = [p for p in names if p in scope.members]
+            if not names:
+                continue
         if person_id is not None and person_id not in names:
             continue
         cost = sum(cohort.cost.get((key, p), 0.0) for p in names)

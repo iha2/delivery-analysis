@@ -104,3 +104,18 @@ def test_ask_generate_ratio_without_generate_cost_is_none(conn):
     rebuild(conn, date(2026, 3, 20))
     row = by_name(run(conn, "ask_generate_ratio"))["Ada Example"]
     assert row["value"] is None and row["ranked"] is False
+
+
+def test_a_person_with_cost_but_no_credited_points_is_not_a_ranked_zero(conn):
+    w, ada, bo, cy = build(conn)
+    eve = w.person("Eve Example")
+    for key, day in (("MD-1", "2026-03-02"), ("MD-2", "2026-03-04"), ("MD-3", "2026-03-06")):
+        item = conn.execute("SELECT source_id FROM work_item WHERE key = ?", (key,)).fetchone()["source_id"]
+        conn.execute(
+            "INSERT INTO token_attribution (person_id, day, work_item_source, work_item_id, cost_usd, method, "
+            "confidence, inputs, algo_version, computed_at) "
+            "VALUES (?, ?, 'jira', ?, 40.0, 'manual', 'high', '{}', 'test', '2026-03-20T00:00:00Z')", (eve.person_id, day, item))
+    row = by_name(run(conn, "story_points_per_dollar"))["Eve Example"]
+    assert (row["sample"], row["ranked"], row["confidence"]) == (0, False, None)
+    assert row["denominator"] == 120.0 and row["numerator"] == 0.0
+    assert row["unranked_reason"] == "fewer than 3 completed tickets"

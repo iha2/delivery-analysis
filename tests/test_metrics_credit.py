@@ -101,3 +101,47 @@ def test_an_issue_credited_only_to_an_excluded_account_is_left_out_and_counted_a
     issue(conn, "14", "acc-ann", resolved="2026-09-26T14:00:00Z", points=4)
     scoped = cr.scoped(conn, team_scope(conn, "t1"), cr.credit_for(conn, WINDOW))
     assert "MD-14" not in [row["key"] for row, _ in scoped.items] and scoped.outside == 3
+
+
+def _claude_world(conn):
+    from datetime import date
+    from token_world import World
+    from delivery_analysis.tokens.rebuild import rebuild
+    w = World(conn)
+    ada, eve = w.person("Ada Example"), w.person("Eve Example")
+    t1 = w.ticket("MD-1", assignee=ada, points=3).in_progress("2026-09-02")
+    pr_ = w.pull_request(ada, created="2026-09-02", merged="2026-09-03", links=[t1])
+    w.commit(ada, "2026-09-02", pr=pr_)
+    w.event(pr_, eve, "comment", "2026-09-02")
+    w.usage(ada, "2026-09-02", 1000)
+    t1.completed("2026-09-03")
+    t2 = w.ticket("MD-2", assignee=eve, points=2).in_progress("2026-09-04").completed("2026-09-05")
+    rebuild(conn, date(2026, 9, 20))
+    conn.execute("DELETE FROM ticket_credit WHERE work_item_id = ?", (t2.id,))  # as if the rebuild skipped it
+    return w
+
+
+def test_ticket_credit_shares_replace_pull_request_and_assignee_credit(conn):
+    _claude_world(conn)
+    credit = cr.credit_for(conn, WINDOW)
+    by_key = {row["key"]: credit.shares[row["source_id"]] for row in credit.issues}
+    assert by_key["MD-1"] == {"person:p-ada": pytest.approx(0.8), "person:p-eve": pytest.approx(0.2)}
+    assert by_key["MD-2"] == {key("acc-eve"): 1.0}  # no ticket_credit rows: the assignee
+    assert len(credit.by_evidence) == 1
+
+
+def test_story_points_done_and_the_per_dollar_numerator_credit_the_same_points(conn):
+    from delivery_analysis.metrics.catalog import BY_NAME
+    from delivery_analysis.metrics.registry import run_metric
+    _claude_world(conn)
+    done = {r["name"]: r for r in run_metric(conn, BY_NAME["story_points_done"], Scope(), WINDOW)["rows"]}
+    per = {r["name"]: r for r in run_metric(conn, BY_NAME["story_points_per_dollar"], Scope(), WINDOW)["rows"]}
+    assert done["Ada Example"]["value"] == per["Ada Example"]["numerator"] == pytest.approx(2.4)
+
+
+def test_the_credit_note_names_claude_evidence_pull_requests_and_assignees(conn):
+    _claude_world(conn)
+    assert cr.credit_note(cr.credit_for(conn, WINDOW)) == (
+        "1 of 2 completed issue(s) were credited by Claude-era evidence, 0 to the authors of their linked "
+        "pull requests and 1 to the assignee because no pull request is linked."
+    )
