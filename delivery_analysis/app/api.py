@@ -232,7 +232,10 @@ def build_router(ctx: AppContext) -> APIRouter:
         with _db(ctx) as conn:
             try:
                 scope = team_scope(conn, team, include_inactive)
-                result = run_metric(conn, definition, scope, _window(ctx, conn, team, window, start, end))
+                result = run_metric(
+                    conn, definition, scope, _window(ctx, conn, team, window, start, end),
+                    history_days=ctx.settings.window_days,
+                )
             except LookupError as exc:
                 raise _fail(ctx, 404, exc)
             except ValueError as exc:

@@ -35,7 +35,7 @@ def test_per_person_rows_rank_trend_unranked_and_unmapped(conn):
         ("Bob Builder", 1.0, 1, 0.0, None, False, None),
         ("Unmapped (1 account)", 2.0, 2, None, None, False, None),
     ]
-    assert result["team"] == {"value": 7.0, "sample": 7}
+    assert result["team"] == {"value": 7.0, "sample": 7, "previous": 2.0, "trend": 2.5}
     assert result["window"]["label"] == "September 2026"
 
 
@@ -93,3 +93,69 @@ def test_the_team_total_includes_activity_by_unmapped_accounts(conn):
     metric = r.Metric("t", "T", "hours", r.PER_PERSON, ("bitbucket",), aggregate="median", compute=counting(data))
     result = r.run_metric(conn, metric, Scope(), SEPT_WINDOW)
     assert result["team"]["value"] == 30.0 and result["team"]["sample"] == 3
+
+
+def _payload(conn, source, fetched_at, source_id="p1"):
+    conn.execute("DELETE FROM raw_payload")
+    if fetched_at:
+        conn.execute(
+            "INSERT INTO raw_payload (source, source_id, kind, json, fetched_at) VALUES (?, ?, 'x', '{}', ?)",
+            (source, source_id, fetched_at),
+        )
+
+
+def _trend_metric():
+    data = {
+        SEPT_WINDOW.start: {"bitbucket:acc-ann": [1, 1, 1, 1], "bitbucket:acc-zed": [1, 1]},
+        AUG_START: {"bitbucket:acc-ann": [1, 1], "bitbucket:acc-zed": [1, 1]},
+    }
+    return r.Metric("m", "M", "count", r.PER_PERSON, ("bitbucket",), compute=counting(data))
+
+
+def test_team_previous_and_trend_use_the_same_grouping_as_the_total(conn):
+    seed(conn)
+    _payload(conn, "bitbucket", None)
+    team = r.run_metric(conn, _trend_metric(), team_scope(conn, "t1"), SEPT_WINDOW)["team"]
+    assert team == {"value": 6.0, "sample": 6, "previous": 4.0, "trend": 0.5}
+
+
+def test_team_trend_is_none_when_previous_is_zero_and_for_non_windowed_metrics(conn):
+    seed(conn)
+    _payload(conn, "bitbucket", None)
+    data = {SEPT_WINDOW.start: {"bitbucket:acc-ann": [1]}}
+    metric = r.Metric("m", "M", "count", r.PER_PERSON, ("bitbucket",), compute=counting(data))
+    team = r.run_metric(conn, metric, Scope(), SEPT_WINDOW)["team"]
+    assert team["previous"] == 0.0 and team["trend"] is None
+    flat = r.Metric("f", "F", "count", r.PER_PERSON, ("bitbucket",), windowed=False, compute=counting(data))
+    team = r.run_metric(conn, flat, Scope(), SEPT_WINDOW)["team"]
+    assert team["previous"] is None and team["trend"] is None
+
+
+def test_coverage_start_is_the_first_fetch_minus_history_days(conn):
+    _payload(conn, "bitbucket", "2026-10-01T12:00:00Z")
+    conn.execute(
+        "INSERT INTO raw_payload (source, source_id, kind, json, fetched_at) "
+        "VALUES ('bitbucket', 'p2', 'x', '{}', '2026-10-10T00:00:00Z')"
+    )
+    assert r.coverage_start(conn, "bitbucket", 90) == "2026-07-03T12:00:00Z"
+    assert r.coverage_start(conn, "jira", 90) is None
+
+
+def test_trend_is_hidden_with_a_note_when_history_is_short(conn):
+    seed(conn)
+    _payload(conn, "bitbucket", "2026-10-01T12:00:00Z")
+    result = r.run_metric(conn, _trend_metric(), team_scope(conn, "t1"), SEPT_WINDOW, history_days=20)
+    # coverage starts 2026-09-11, after the previous window starts (2026-08-02)
+    assert all(row["previous"] is None and row["trend"] is None for row in result["rows"])
+    assert result["team"]["previous"] is None and result["team"]["trend"] is None
+    assert result["team"]["value"] == 6.0
+    assert "Not enough history for a trend yet: bitbucket data starts 2026-09-11." in result["notes"]
+
+
+def test_trend_is_kept_when_history_is_long_enough(conn):
+    seed(conn)
+    _payload(conn, "bitbucket", "2026-10-01T12:00:00Z")  # coverage starts 2026-07-03
+    result = r.run_metric(conn, _trend_metric(), team_scope(conn, "t1"), SEPT_WINDOW, history_days=90)
+    assert result["team"]["trend"] == 0.5
+    assert result["rows"][0]["trend"] == 1.0
+    assert not any("Not enough history" in note for note in result["notes"])

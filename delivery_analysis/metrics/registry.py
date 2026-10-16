@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import sqlite3
 import statistics
+from datetime import datetime, timedelta
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 from delivery_analysis.metrics.people import People, Scope
-from delivery_analysis.metrics.window import Window, previous
+from delivery_analysis.metrics.window import ISO_Z, Window, previous
 
 PER_PERSON = "per_person"
 TEAM_SERIES = "team_series"
@@ -20,6 +21,9 @@ SOURCE_PROBES = {
     "links": "SELECT 1 FROM link LIMIT 1",
     "confluence": "SELECT 1 FROM document LIMIT 1",
 }
+
+# Metric needs that are backed by raw payloads, mapped to the raw_payload source.
+COVERAGE_SOURCES = {"bitbucket": "bitbucket", "jira": "jira"}
 
 
 @dataclass
@@ -53,6 +57,15 @@ def missing_sources(conn: sqlite3.Connection, metric: Metric) -> List[str]:
     if metric.compute is None:
         return list(metric.needs)
     return [name for name in metric.needs if conn.execute(SOURCE_PROBES[name]).fetchone() is None]
+
+
+def coverage_start(conn: sqlite3.Connection, source: str, history_days: int) -> Optional[str]:
+    """The start of the window a source's first sync asked for, or None if it has no payloads."""
+    row = conn.execute("SELECT MIN(fetched_at) AS first FROM raw_payload WHERE source = ?", (source,)).fetchone()
+    if row is None or row["first"] is None:
+        return None
+    first = datetime.strptime(row["first"], ISO_Z)
+    return (first - timedelta(days=history_days)).strftime(ISO_Z)
 
 
 def percentile(values: Sequence[float], pct: float) -> Optional[float]:
@@ -116,8 +129,9 @@ def _per_person(conn, metric: Metric, scope: Scope, window: Window, people: Peop
     current = metric.compute(conn, scope, window)
     by_person, unmapped, unmapped_keys = _group(current, people, scope)
     before: Dict[str, List[float]] = {}
+    before_unmapped: List[float] = []
     if metric.windowed:
-        before, _, _ = _group(metric.compute(conn, scope, previous(window)), people, scope)
+        before, before_unmapped, _ = _group(metric.compute(conn, scope, previous(window)), people, scope)
     person_ids = set(by_person) if scope.members is None else set(scope.members)
     rows: List[Dict[str, Any]] = []
     for person_id in person_ids:
@@ -162,9 +176,32 @@ def _per_person(conn, metric: Metric, scope: Scope, window: Window, people: Peop
     # The team total covers every row shown, including the Unmapped row.
     every = [value for values in by_person.values() for value in values] + unmapped
     team: Dict[str, Any] = {"value": _round(aggregate(every, metric.aggregate)), "sample": len(every)}
+    team_value = aggregate(every, metric.aggregate)
+    team_prior: Optional[float] = None
+    if metric.windowed:
+        earlier = [value for values in before.values() for value in values] + before_unmapped
+        team_prior = aggregate(earlier, metric.aggregate)
+    team_trend = (team_value - team_prior) / team_prior if team_value is not None and team_prior else None
+    team["previous"] = _round(team_prior)
+    team["trend"] = _round(team_trend)
     if metric.aggregate == "median":
         team["p85"] = _round(percentile(every, 85))
     return out, list(current.notes), team
+
+
+def _short_history(
+    conn: sqlite3.Connection, metric: Metric, window: Window, history_days: int
+) -> Optional[Tuple[str, str]]:
+    """The needed source whose data starts latest, if that is after the previous window begins."""
+    latest: Optional[Tuple[str, str]] = None
+    for need in metric.needs:
+        source = COVERAGE_SOURCES.get(need)
+        starts = coverage_start(conn, source, history_days) if source else None
+        if starts and (latest is None or starts > latest[1]):
+            latest = (source, starts)
+    if latest and previous(window).start < latest[1]:
+        return latest
+    return None
 
 
 def run_metric(
@@ -173,6 +210,8 @@ def run_metric(
     scope: Scope,
     window: Window,
     people: Optional[People] = None,
+    *,
+    history_days: int = 90,
 ) -> Dict[str, Any]:
     result = describe(conn, metric)
     result.update({"window": window.to_json(), "rows": [], "notes": [], "team": None})
@@ -187,5 +226,15 @@ def run_metric(
     except Exception as exc:  # one bad metric must not break the page
         result.update({"status": "error", "error": str(exc) or exc.__class__.__name__})
         return result
+    if metric.kind == PER_PERSON and metric.windowed:
+        short = _short_history(conn, metric, window, history_days)
+        if short:
+            source, starts = short
+            for row in rows:
+                row["previous"] = None
+                row["trend"] = None
+            team["previous"] = None
+            team["trend"] = None
+            notes = list(notes) + [f"Not enough history for a trend yet: {source} data starts {starts[:10]}."]
     result.update({"rows": rows, "notes": notes, "team": team})
     return result

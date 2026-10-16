@@ -39,7 +39,7 @@ def test_inactive_members_appear_only_when_asked(seeded):
 def test_time_to_merge_is_a_median_with_p85_and_an_approximation_note(seeded):
     result = run(seeded, "time_to_merge")
     assert table(result)[0] == ("Ann Example", 24.0, 3, 1)
-    assert result["team"] == {"value": 24.0, "sample": 3, "p85": 40.8}
+    assert result["team"] == {"value": 24.0, "sample": 3, "p85": 40.8, "previous": 24.0, "trend": 0.0}
     assert any("1 merge times are approximate" in note for note in result["notes"])
 
 
@@ -104,7 +104,7 @@ def test_the_catalog_has_every_planned_metric_and_waiting_ones_are_waiting(seede
             "review_load", "commits", "work_in_progress", "prs_merged_weekly", "lead_time_breakdown",
             "issues_done", "issues_done_weekly", "cycle_time", "story_points_done", "cost_spent",
             "story_points_per_dollar", "unattributed_cost_share", "ask_generate_ratio",
-            "prs_with_issue_link", "documentation_activity"} == names
+            "prs_with_issue_link", "documentation_activity", "story_points_weekly", "points_by_type", "cycle_time_weekly", "cycle_time_summary", "prs_linked_weekly"} == names
     waiting = run(seeded, "story_points_per_dollar")
     assert waiting["status"] == "waiting" and waiting["missing"] == ["jira", "claude_usage"]
     assert all(metric.kind in (PER_PERSON, "team_series", "team_breakdown") for metric in METRICS)
