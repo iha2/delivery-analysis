@@ -4,6 +4,7 @@
   // Metrics that have a card (or feed one): the "Coming with new sources" list skips them.
   const ON_CARDS = ["story_points_weekly", "story_points_done", "issues_done", "points_by_type", "cycle_time_weekly",
     "cycle_time_summary", "prs_linked_weekly", "prs_with_issue_link", "story_points_per_dollar", "ask_generate_ratio",
+    "story_points_per_dollar_weekly", "story_points_per_dollar_all_in", "unattributed_cost_share", "cost_by_purpose_weekly",
     "issues_done_weekly", "prs_merged_weekly", "time_to_merge", "lead_time_breakdown", "review_load", "work_in_progress"];
 
   function load(name, extra) { return DA.api("/api/metrics/" + name + DA.query(extra)); }
@@ -105,41 +106,77 @@
     }).catch(fail(body));
   }
 
+  function unique(list) {
+    return list.filter(function (item, index) { return item && list.indexOf(item) === index; });
+  }
+
   function impactPerToken(cards) {
-    const body = DA.card(cards, "Impact per token", "Story points done per dollar of Claude cost, by person (cost is the proxy for tokens)");
-    load("story_points_per_dollar").then(function (r) {
-      if (DA.showResult(body, r)) { return; }
-      const rows = r.rows.filter(function (x) { return x.value !== null && x.person_id; });
-      if (!rows.length) { DA.message(body, "No cost and points pairs in this window."); return; }
-      DA.charts.hbars(DA.canvas(body), rows.map(function (x) { return x.name; }), rows.map(function (x) { return x.value; }), "Story points per dollar");
-      DA.table(body, ["Person", "Points per dollar"], rows.map(function (x) { return [x.name, DA.fmt(x.value, "points_per_usd")]; }));
-      DA.notes(body, r.notes);
+    const body = DA.card(cards, "Impact per token", "Story points per dollar of attributed Claude cost (cost proxy), by completion week");
+    Promise.all([load("story_points_per_dollar_weekly"), load("story_points_per_dollar"),
+                 load("story_points_per_dollar_all_in"), load("unattributed_cost_share")]).then(function (rs) {
+      const weekly = rs[0];
+      if (DA.showResult(body, weekly)) { return; }
+      const team = function (r) { return r.team ? r.team.value : null; };
+      body.appendChild(DA.el("div", { class: "stats" }, [
+        tile(DA.fmt(team(rs[1]), "points_per_usd"), "attributed"),
+        tile(DA.fmt(team(rs[2]), "points_per_usd"), "all-in"),
+        tile(DA.fmt(team(rs[3]), "ratio"), "unattributed cost share"),
+      ]));
+      DA.charts.series(DA.canvas(body), weeks(weekly.rows),
+        [{ label: "Points per dollar", data: weekly.rows.map(function (w) { return w.value; }) }], { type: "line" });
+      DA.table(body, ["Week starting", "Tickets", "Points", "Attributed cost", "Points per dollar"],
+        weekly.rows.filter(function (w) { return w.tickets; }).map(function (w) {
+          return [w.week, w.tickets, DA.fmt(w.points), DA.fmt(w.cost_usd, "usd"), DA.fmt(w.value, "points_per_usd")];
+        }));
+      DA.notes(body, unique((weekly.notes || []).concat(rs[1].notes || [])));
     }).catch(fail(body));
   }
 
   function costVsPoints(cards) {
-    const body = DA.card(cards, "Cost and impact by person", "Each dot is one person: Claude cost against story points done");
+    const body = DA.card(cards, "Cost and impact by person", "Attributed Claude cost against credited story points, tickets completed in the window");
     load("story_points_per_dollar").then(function (r) {
       if (DA.showResult(body, r)) { return; }
-      const rows = r.rows.filter(function (x) { return x.person_id && x.numerator !== undefined && x.denominator !== undefined; });
-      if (!rows.length) { DA.message(body, "No cost and points pairs in this window."); return; }
-      DA.charts.scatter(DA.canvas(body), rows.map(function (p) { return { x: p.denominator, y: p.numerator, label: p.name }; }),
-        { x: "Claude cost (USD)", y: "Story points done" });
-      DA.table(body, ["Person", "Cost", "Story points"], rows.map(function (p) { return [p.name, DA.fmt(p.denominator, "usd"), DA.fmt(p.numerator, "points")]; }));
+      const people = r.rows.filter(function (x) { return x.person_id && x.denominator !== undefined; });
+      if (!people.length) { DA.message(body, "No completed tickets with Claude cost in this window."); return; }
+      DA.charts.scatter(DA.canvas(body), people.map(function (x) {
+        return { x: x.denominator, y: x.numerator,
+                 label: x.name + (x.ranked ? "" : " (unranked)") + (x.confidence ? ", " + x.confidence + " confidence" : "") };
+      }), { x: "Attributed Claude cost (USD)", y: "Credited story points" });
+      if (r.team && r.team.value !== null) {
+        basis(body, "Team: " + DA.fmt(r.team.value, "points_per_usd") +
+          " points per dollar. People above that slope deliver more points per dollar than the team; compare people with their own trend first.");
+      }
+      DA.table(body, ["Person", "Cost", "Points", "Points per dollar", "Confidence"], people.map(function (x) {
+        return [x.name, DA.fmt(x.denominator, "usd"), DA.fmt(x.numerator), DA.fmt(x.value, "points_per_usd"), x.confidence || "–"];
+      }));
       DA.notes(body, r.notes);
     }).catch(fail(body));
   }
 
   function askVsGenerate(cards) {
-    const body = DA.card(cards, "Ask vs generate", "Context only, not a score: hard or unfamiliar work needs more asking");
-    load("ask_generate_ratio").then(function (r) {
-      if (DA.showResult(body, r)) { return; }
-      const rows = r.rows.filter(function (x) { return x.value !== null && x.person_id; })
-        .sort(function (a, b) { return a.name.localeCompare(b.name); });
-      if (!rows.length) { DA.message(body, "No usage in this window."); return; }
-      DA.charts.hbars(DA.canvas(body), rows.map(function (x) { return x.name; }), rows.map(function (x) { return x.value; }), "Ask to generate ratio");
-      DA.table(body, ["Person", "Ask to generate"], rows.map(function (x) { return [x.name, DA.fmt(x.value, r.unit)]; }));
-      DA.notes(body, r.notes);
+    const body = DA.card(cards, "Ask vs generate", "Context only, not a score: Claude cost by purpose per week, a coarse proxy (v1) with low confidence");
+    Promise.all([load("cost_by_purpose_weekly"), load("ask_generate_ratio")]).then(function (rs) {
+      const weekly = rs[0], ratio = rs[1];
+      if (DA.showResult(body, weekly)) { return; }
+      const pick = function (name) { return weekly.rows.map(function (w) { return w[name]; }); };
+      DA.charts.series(DA.canvas(body), weeks(weekly.rows), [
+        { label: "Ask", data: pick("ask") },
+        { label: "Generate", data: pick("generate") },
+        { label: "Unclassified", data: pick("unclassified") },
+      ], { type: "bar", stacked: true });
+      DA.table(body, ["Week starting", "Ask", "Generate", "Unclassified"], weekly.rows.map(function (w) {
+        return [w.week, DA.fmt(w.ask, "usd"), DA.fmt(w.generate, "usd"), DA.fmt(w.unclassified, "usd")];
+      }));
+      if (ratio.status === "ok") {
+        const rows = ratio.rows.filter(function (x) { return x.person_id && x.value !== null; })
+          .sort(function (a, b) { return a.name.localeCompare(b.name); });
+        if (rows.length) {
+          DA.charts.hbars(DA.canvas(body), rows.map(function (x) { return x.name; }), rows.map(function (x) { return x.value; }),
+            "Ask to generate (context, not a score)");
+          DA.table(body, ["Person", "Ask to generate"], rows.map(function (x) { return [x.name, DA.fmt(x.value, ratio.unit)]; }));
+        }
+      }
+      DA.notes(body, unique((weekly.notes || []).concat(ratio.notes || [])));
     }).catch(fail(body));
   }
 

@@ -3,7 +3,8 @@
   const DA = window.DA;
   const STATS = [["prs_merged", "PRs merged"], ["reviews_given", "Reviews given"], ["reviews_assigned", "Reviews assigned"],
                  ["review_response_rate", "Response rate"], ["time_to_merge", "Median time to merge"], ["commits", "Commits"],
-                 ["story_points_done", "Story points done"], ["issues_done", "Issues done"], ["cycle_time", "Median cycle time"]];
+                 ["story_points_done", "Story points done"], ["issues_done", "Issues done"], ["cycle_time", "Median cycle time"],
+                 ["cost_spent", "Claude cost"], ["story_points_per_dollar", "Points per dollar"]];
 
   function list(container, headers, rows) {
     container.textContent = "";
@@ -42,6 +43,20 @@
       list(document.getElementById("person-reviews"), ["#", "Title", "Repository", "Kind", "When"],
         d.reviews_given.map(function (r) { return [r.number, r.title, r.repository, r.type, day(r.occurred_at)]; }));
     }).catch(function (e) { DA.message(document.getElementById("person-prs"), e.message, "error"); });
+
+    const tickets = document.getElementById("person-tickets");
+    DA.api("/api/tickets" + DA.query({ person: s.id })).then(function (t) {
+      list(tickets, ["Ticket", "Type", "Points", "Claude cost", "Points per $", "Confidence", "PRs", "Hours to merge"],
+        t.tickets.map(function (x) {
+          return [x.key, x.type, x.points, DA.fmt(x.cost_usd, "usd"), DA.fmt(x.points_per_usd, "points_per_usd"),
+                  x.confidence, x.pull_requests, DA.fmt(x.hours_to_merge, "hours")];
+        }));
+      if (t.cost_weekly && t.cost_weekly.some(function (w) { return w.cost_usd; })) {
+        DA.charts.bars(DA.canvas(tickets), t.cost_weekly.map(function (w) { return w.week; }),
+          t.cost_weekly.map(function (w) { return w.cost_usd; }), "Claude cost (USD)");
+      }
+      DA.notes(tickets, t.notes);
+    }).catch(function (e) { DA.message(tickets, e.message, "error"); });
 
     const stats = document.getElementById("person-stats");
     stats.textContent = "";

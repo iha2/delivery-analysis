@@ -134,3 +134,34 @@ def test_person_page_has_points_cycle_time_and_completed_issues():
     assert "d.issues_done" in script and "i.basis" in script and "i.share" in script
     assert 'id="person-issues"' in html and 'id="person-issues-card"' in html
     assert "hidden" in html.split('id="person-issues-card"')[0].split("<section")[-1]
+
+
+def test_formats_know_the_ratio_to_usd_units():
+    app = read("app.js")
+    assert 'unit === "points_per_usd"' in app and 'unit === "multiple"' in app
+
+
+def test_rankings_shows_confidence_and_the_unranked_reason():
+    script = read("pages", "rankings.js")
+    assert '"Confidence"' in script and "row.confidence" in script
+    assert "row.unranked_reason" in script and "(unranked: " in script
+
+
+def test_person_page_lists_tickets_with_claude_cost_from_the_api():
+    script = read("pages", "person.js")
+    html = read("person.html")
+    assert 'id="person-tickets"' in html
+    assert '"/api/tickets"' in script and "t.cost_weekly" in script and "x.points_per_usd" in script
+    assert '"cost_spent"' in script and '"story_points_per_dollar"' in script
+
+
+def test_dashboard_impact_per_token_cards_read_the_api_and_compute_nothing():
+    script = read("pages", "dashboard.js")
+    for name in ("story_points_per_dollar_weekly", "story_points_per_dollar_all_in", "unattributed_cost_share",
+                 "cost_by_purpose_weekly"):
+        assert f'"{name}"' in script, name
+        assert f'"{name}"' in script[: script.index("function waiting")] and name in script[script.index("ON_CARDS"):script.index("function load")]
+    assert "x.denominator" in script and "x.numerator" in script and "confidence" in script
+    block = script[script.index("function impactPerToken"):script.index("function throughput")]
+    assert "reduce(" not in block and " / " not in block and "sum(" not in block
+    assert 'type: "line"' in block and "stacked: true" in block

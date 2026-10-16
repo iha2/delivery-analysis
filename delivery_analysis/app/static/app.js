@@ -71,6 +71,7 @@
     if (unit === "hours") { return value >= 48 ? (value / 24).toFixed(1) + " d" : value.toFixed(1) + " h"; }
     if (unit === "usd") { return "$" + value.toFixed(2); }
     if (unit === "points_per_usd") { return value.toFixed(2); }
+    if (unit === "multiple") { return value.toFixed(2) + "x"; }
     return Number.isInteger(value) ? String(value) : value.toFixed(1);
   };
 

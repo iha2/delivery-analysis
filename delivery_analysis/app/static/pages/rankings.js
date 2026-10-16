@@ -15,21 +15,26 @@
     container.textContent = "";
     if (DA.showResult(container, r)) { return; }
     const s = DA.state();
-    const head = DA.el("tr", {}, ["#", "Person", r.label, "Previous", "Trend", "Sample"].map(function (h, i) {
-      return DA.el("th", { class: i >= 2 ? "num" : "", text: h });
+    const withConfidence = r.rows.some(function (row) { return row.confidence; });
+    const headers = ["#", "Person", r.label, "Previous", "Trend", "Sample"].concat(withConfidence ? ["Confidence"] : []);
+    const head = DA.el("tr", {}, headers.map(function (h, i) {
+      return DA.el("th", { class: i >= 2 && i <= 5 ? "num" : "", text: h });
     }));
     const lines = r.rows.map(function (row) {
       const person = row.person_id
         ? DA.el("a", { href: "/person" + DA.query({ id: row.person_id }), text: row.name })
         : DA.el("span", { text: row.name });
-      return DA.el("tr", { class: row.ranked ? "" : "unranked" }, [
+      const why = row.unranked_reason ? " (unranked: " + row.unranked_reason + ")" : " (unranked)";
+      const cells = [
         DA.el("td", { text: row.rank ? String(row.rank) : "–" }),
-        DA.el("td", {}, [person, row.ranked || !row.person_id ? null : DA.el("span", { class: "muted", text: " (unranked)" })]),
+        DA.el("td", {}, [person, row.ranked || !row.person_id ? null : DA.el("span", { class: "muted", text: why })]),
         DA.el("td", { class: "num", text: DA.fmt(row.value, r.unit) }),
         DA.el("td", { class: "num", text: DA.fmt(row.previous, r.unit) }),
         DA.el("td", { class: "num" }, [DA.trend(row.trend, r.better)]),
         DA.el("td", { class: "num", text: String(row.sample) }),
-      ]);
+      ];
+      if (withConfidence) { cells.push(DA.el("td", { text: row.confidence || "–" })); }
+      return DA.el("tr", { class: row.ranked ? "" : "unranked" }, cells);
     });
     container.appendChild(DA.el("table", {}, [DA.el("thead", {}, [head]), DA.el("tbody", {}, lines)]));
     if (r.team) {
