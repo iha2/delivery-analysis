@@ -30,12 +30,14 @@ from delivery_analysis.store.repo_selection import detail_progress
 from delivery_analysis.cli import projects as projects_cli
 from delivery_analysis.cli import repos as repos_cli
 from delivery_analysis.cli import teams as teams_cli
+from delivery_analysis.cli import tokens as tokens_cli
 from delivery_analysis.sync.service import sync_and_reconcile
 from github_analysis.cli.commands import COMMAND_REGISTRARS
 
 NO_CONNECTORS_MESSAGE = (
-    "No connectors are configured yet. Set BITBUCKET in .env to enable Bitbucket, or ATLASSIAN "
-    "and ATLASSIAN_EMAIL to enable Jira; Confluence and Claude usage connectors arrive in later specs."
+    "No connectors are configured yet. Set BITBUCKET in .env to enable Bitbucket, ATLASSIAN and "
+    "ATLASSIAN_EMAIL to enable Jira, or ANTHROPIC_ADMIN (or ANTHROPIC) to enable Claude usage "
+    "(claude_code_analytics); only Confluence is still to come."
 )
 
 
@@ -77,6 +79,7 @@ def build_parser() -> argparse.ArgumentParser:
     teams_cli.register(commands)
     repos_cli.register(commands)
     projects_cli.register(commands)
+    tokens_cli.register(commands)
     return parser
 
 
@@ -193,6 +196,8 @@ def main(
         return repos_cli.run(args, settings, env, transport=transport)
     if args.command == "projects":
         return projects_cli.run(args, settings, env, transport=transport)
+    if args.command == "tokens":
+        return tokens_cli.run(args, settings)
     if args.command == "serve":
         return _serve(args, settings, env)
     if args.command == "sync":
