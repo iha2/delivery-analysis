@@ -62,7 +62,7 @@ def status_transitions(histories: Sequence[Mapping[str, Any]]) -> List[Transitio
     for entry in histories:
         occurred = ts_to_utc_iso(entry.get("created"))
         if occurred is None:
-            continue
+            raise ValueError(f"History entry {entry.get('id')!r} has no created timestamp.")
         actor = (entry.get("author") or {}).get("accountId") or None
         for index, item in enumerate(entry.get("items") or []):
             if item.get("fieldId") != "status":
@@ -183,6 +183,19 @@ def _excluded_types(project: Mapping[str, Any]) -> set:
     return {part.strip() for part in (project.get("excluded_types") or "").split(",") if part.strip()}
 
 
+PERSONAL_KEYS = frozenset({"emailAddress", "avatarUrls"})
+
+
+def _without_personal_keys(value: Any) -> Any:
+    """A deep copy with `emailAddress` and `avatarUrls` removed at any depth (emails live only in
+    property(identity, email))."""
+    if isinstance(value, Mapping):
+        return {k: _without_personal_keys(v) for k, v in value.items() if k not in PERSONAL_KEYS}
+    if isinstance(value, (list, tuple)):
+        return [_without_personal_keys(v) for v in value]
+    return value
+
+
 def issue_records(
     issue: Mapping[str, Any],
     project: Mapping[str, Any],
@@ -262,5 +275,5 @@ def issue_records(
     parent = fields.get("parent")
     if isinstance(parent, dict) and parent.get("key"):
         records.append(prop("work_item", issue_id, "parent_key", str(parent["key"])))
-    raw = RawPayload(SOURCE, issue_id, "issue", json.dumps(issue, sort_keys=True))
+    raw = RawPayload(SOURCE, issue_id, "issue", json.dumps(_without_personal_keys(issue), sort_keys=True))
     return IssueResult(records, raw, ts_to_utc_iso(fields.get("updated")), life.unknown_statuses)

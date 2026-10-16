@@ -24,7 +24,9 @@ def jira_fake():
         issue(5001, "MD-1", status="COMPLETED", assignee=ANN, points=5, updated=jira_ts(3)),
         [history(1, "2026-10-02T10:00:00Z", "To Do", "In Progress"), history(2, "2026-10-09T10:00:00Z", "In Progress", "COMPLETED")],
     )
-    api.add_issue(issue(5002, "MD-2", status="In Progress", assignee=ANN, points=3, updated=jira_ts(2)))
+    owner = user("acc-me", "Token Owner", EMAIL)
+    owner["avatarUrls"] = {"48x48": "https://avatar.example/acc-me"}
+    api.add_issue(issue(5002, "MD-2", status="In Progress", assignee=owner, reporter=ANN, points=3, updated=jira_ts(2)))
     return api
 
 
@@ -95,8 +97,17 @@ def test_the_jira_sync_through_the_cli_never_leaks_the_token_or_the_email(tmp_pa
         assert text not in out.out and text not in out.err
     for path in tmp_path.glob("delivery.sqlite*"):
         data = path.read_bytes()
-        assert TOKEN.encode("utf-8") not in data and EMAIL.encode("utf-8") not in data
+        assert TOKEN.encode("utf-8") not in data
     conn = db.connect(tmp_path / "delivery.sqlite")
+    # MD-2's assignee carries the token owner's email. The one place an email may live is
+    # property(identity, email); any other row holding it (raw_payload above all) is a leak.
+    holders = set()
+    for table in [r["name"] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")]:
+        for row in conn.execute(f'SELECT rowid AS rid, * FROM "{table}"'):
+            if any(isinstance(v, str) and EMAIL in v.lower() for v in tuple(row)):
+                holders.add((table, row["record_kind"] if table == "property" else None, row["name"] if table == "property" else None))
+    assert holders == {("property", "identity", "email")}
+    assert conn.execute("SELECT COUNT(*) AS n FROM raw_payload WHERE json LIKE '%@%'").fetchone()["n"] == 0
     assert conn.execute("SELECT COUNT(*) AS n FROM work_item").fetchone()["n"] == 2
 
 

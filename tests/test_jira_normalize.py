@@ -233,3 +233,24 @@ def test_the_raw_payload_is_the_issue_json():
     result = make(issue(7001, "MD-7"))
     assert (result.raw.source, result.raw.source_id, result.raw.kind) == ("jira", "7001", "issue")
     assert json.loads(result.raw.json)["key"] == "MD-7"
+
+
+def test_the_raw_payload_carries_no_email_or_avatar_at_any_depth():
+    ann = user("acc-ann", "Ann Example", "ann@corp.example")
+    bob = user("acc-bob", "Bob Example", "bob@corp.example")
+    cat = user("acc-cat", "Cat Example", "cat@corp.example")
+    for person in (ann, bob, cat):
+        person["avatarUrls"] = {"48x48": "https://avatar.example/" + person["accountId"]}
+    deep = [{"who": {"emailAddress": "deep@corp.example"}}]
+    item = issue(1, "MD-1", assignee=ann, reporter=bob, extra={"creator": cat, "customfield_20000": deep})
+    result = make(item)
+    assert "emailAddress" not in result.raw.json and "avatarUrls" not in result.raw.json
+    assert "@corp.example" not in result.raw.json
+    assert json.loads(result.raw.json)["fields"]["assignee"]["accountId"] == "acc-ann"
+    assert "emailAddress" in json.dumps(item)  # the caller's issue is not mutated
+
+
+def test_a_history_entry_without_created_fails_the_page():
+    entry = {"id": "1", "items": [{"fieldId": "status", "fromString": "To Do", "toString": "In Progress"}]}
+    with pytest.raises(ValueError):
+        n.status_transitions([entry])
