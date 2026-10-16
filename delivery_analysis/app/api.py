@@ -19,6 +19,7 @@ from delivery_analysis.metrics.people import (
 )
 from delivery_analysis.metrics.person import person_detail
 from delivery_analysis.metrics.registry import describe, run_metric
+from delivery_analysis.metrics.tickets import ticket_costs
 from delivery_analysis.metrics.window import ISO_Z, Window, make_window
 from delivery_analysis.settings import CONFIG_VARS, CREDENTIAL_VARS, credential_status
 from delivery_analysis.store.db import connect
@@ -256,6 +257,23 @@ def build_router(ctx: AppContext) -> APIRouter:
             try:
                 scope = team_scope(conn, team)
                 return person_detail(conn, person_id, _window(ctx, conn, team, window, start, end), scope)
+            except LookupError as exc:
+                raise _fail(ctx, 404, exc)
+            except ValueError as exc:
+                raise _fail(ctx, 400, exc)
+
+    @router.get("/tickets")
+    def tickets(
+        team: Optional[str] = None,
+        window: Optional[str] = None,
+        start: Optional[str] = Query(None, alias="from"),
+        end: Optional[str] = Query(None, alias="to"),
+        person: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        with _db(ctx) as conn:
+            try:
+                scope = team_scope(conn, team)
+                return ticket_costs(conn, scope, _window(ctx, conn, team, window, start, end), person)
             except LookupError as exc:
                 raise _fail(ctx, 404, exc)
             except ValueError as exc:

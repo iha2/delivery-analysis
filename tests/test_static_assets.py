@@ -6,7 +6,7 @@ import pytest
 STATIC = Path(__file__).resolve().parents[1] / "delivery_analysis" / "app" / "static"
 PAGE_FILES = sorted(p for p in STATIC.glob("*.html") if p.name != "index.html")
 NAV_LABELS = ["Dashboard", "Rankings", "Selection", "Teams", "Sources", "Settings", "Ask"]
-API_ROOTS = {"teams", "metrics", "people", "repos", "sources", "refresh", "settings", "identities", "health"}
+API_ROOTS = {"teams", "metrics", "people", "repos", "sources", "refresh", "settings", "identities", "health", "tickets"}
 OWN_FILES = [p for p in STATIC.rglob("*") if p.suffix in (".html", ".js", ".css") and "vendor" not in p.parts]
 
 
