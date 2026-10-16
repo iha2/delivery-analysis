@@ -69,6 +69,11 @@ class People:
 
     def resolve(self, key: str) -> Optional[str]:
         for part in key.split("|"):
+            if part.startswith("person:"):
+                person_id = part[len("person:"):]
+                if person_id in self._names:
+                    return person_id
+                continue
             person = self._person.get(part)
             if person is not None:
                 return person
@@ -97,6 +102,7 @@ SELECT source, account, COUNT(*) AS activity FROM (
           AND author_email IS NOT NULL AND author_email != ''
     UNION ALL SELECT 'bitbucket', substr(name, 10) FROM property
         WHERE record_kind = 'change_request' AND name LIKE 'reviewer:%'
+    UNION ALL SELECT actor_type, actor FROM claude_usage_day
 ) a
 WHERE account IS NOT NULL AND account != ''
   AND NOT EXISTS (
