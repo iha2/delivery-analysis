@@ -29,7 +29,7 @@ from delivery_analysis.store.sync_state import list_sync_states
 from delivery_analysis.sync.runner import utc_now_iso
 from delivery_analysis.teams.reconcile import create_team, reconcile_team
 
-PLANNED_SOURCES = ("bitbucket", "jira", "claude_usage", "confluence")
+PLANNED_SOURCES = ("bitbucket", "jira", "claude_code_analytics", "confluence")
 
 
 class TeamIn(BaseModel):
