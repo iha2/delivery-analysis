@@ -7,7 +7,7 @@ from delivery_analysis.metrics.registry import run_metric
 from delivery_analysis.metrics.window import make_window
 
 WINDOW = make_window(SEPT, TZ, TODAY)
-OUTSIDE = "{n} completed issue(s) are assigned outside this team and are not counted."
+OUTSIDE = "{n} completed issue(s) belong to someone outside this team and are not counted."
 NO_DATE = "{n} done issue(s) have no resolved date and are not counted."
 
 

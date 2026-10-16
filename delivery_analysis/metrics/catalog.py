@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Dict, List
 
 from delivery_analysis.metrics import bitbucket as bb
+from delivery_analysis.metrics import impact as im
 from delivery_analysis.metrics import jira as jr
 from delivery_analysis.metrics.registry import PER_PERSON, TEAM_BREAKDOWN, TEAM_SERIES, Metric
 
@@ -34,13 +35,31 @@ METRICS: List[Metric] = [
            description="Median hours waiting for review, in review, and from approval to merge."),
     # Registered now, computed by later specs (Jira, token usage, linking, Confluence).
     Metric("issues_done", "Issues done", "count", PER_PERSON, ("jira",), compute=jr.issues_done,
-           description="Issues that reached COMPLETED, excluding Epics, Initiatives and sub-tasks."),
+           description="Issues that reached COMPLETED, credited to the authors of their linked pull requests (the assignee when none is linked); excludes Epics, Initiatives and sub-tasks."),
     Metric("issues_done_weekly", "Issues done by week", "count", TEAM_SERIES, ("jira",),
            compute=jr.issues_done_weekly, description="Issues completed per week."),
     Metric("cycle_time", "Cycle time", "hours", PER_PERSON, ("jira",), better="lower", aggregate="median",
            compute=jr.cycle_time, description="First In Progress to COMPLETED."),
     Metric("story_points_done", "Story points done", "points", PER_PERSON, ("jira",),
-           compute=jr.story_points_done, description="Story points of completed issues."),
+           compute=jr.story_points_done,
+           description="Story points of completed issues, split by each author's share of the linked pull requests (the assignee when none is linked)."),
+    Metric("story_points_weekly", "Story points by week", "points", TEAM_SERIES, ("jira",),
+           compute=im.story_points_weekly,
+           description="Story points of completed issues per week, credited by pull request evidence; "
+                       "rows also carry the completed issues and the issues without points."),
+    Metric("points_by_type", "Points by issue type", "points", TEAM_BREAKDOWN, ("jira",),
+           compute=im.points_by_type, description="Story points of completed issues by issue type."),
+    Metric("cycle_time_weekly", "Cycle time by week", "hours", TEAM_SERIES, ("jira",), better="lower",
+           compute=im.cycle_time_weekly,
+           description="Median and 85th percentile hours from first In Progress to COMPLETED, and the median "
+                       "to the first merged linked pull request, by week, counting each issue once."),
+    Metric("cycle_time_summary", "Cycle time (team, by issue)", "hours", TEAM_BREAKDOWN, ("jira",),
+           better="lower", compute=im.cycle_time_summary,
+           description="Median and 85th percentile hours from first In Progress to COMPLETED and to the first "
+                       "merged linked pull request, counting each completed issue once."),
+    Metric("prs_linked_weekly", "PRs linked to an issue by week", "count", TEAM_SERIES, ("bitbucket", "links"),
+           compute=im.prs_linked_weekly,
+           description="Merged pull requests per week, split by whether an issue key links them."),
     Metric("cost_spent", "Claude cost", "usd", PER_PERSON, ("claude_usage",), better="neutral",
            description="Claude cost in USD."),
     Metric("story_points_per_dollar", "Impact per token (cost proxy)", "points_per_usd", PER_PERSON,
@@ -50,7 +69,8 @@ METRICS: List[Metric] = [
     Metric("ask_generate_ratio", "Ask to generate ratio", "ratio", PER_PERSON, ("claude_usage",),
            better="neutral", aggregate="mean", description="Asking cost relative to generating cost."),
     Metric("prs_with_issue_link", "PRs with an issue link", "ratio", PER_PERSON, ("bitbucket", "links"),
-           aggregate="mean", description="Share of pull requests linked to a Jira issue."),
+           aggregate="mean", compute=im.prs_with_issue_link,
+           description="Share of merged pull requests linked to a Jira issue by key in the title or branch."),
     Metric("documentation_activity", "Documentation activity", "count", TEAM_SERIES, ("confluence",),
            description="Confluence page edits per week."),
 ]

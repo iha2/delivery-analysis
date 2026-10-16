@@ -1,0 +1,129 @@
+from __future__ import annotations
+
+import sqlite3
+from collections import Counter
+from dataclasses import dataclass, field
+from typing import Dict, List, Optional, Set, Tuple
+
+from delivery_analysis.metrics.people import People, Scope, actor_key
+from delivery_analysis.metrics.window import Window
+
+CREDIT_NOTE = (
+    "{pr} of {n} completed issue(s) were credited to the authors of their linked pull requests; "
+    "{rest} to the assignee because no pull request is linked."
+)
+
+_DONE_SQL = (
+    "SELECT w.source_id, w.key, w.type, w.assignee_account, w.started_at, w.resolved_at, w.story_points "
+    "FROM work_item w "
+    "JOIN property c ON c.record_kind = 'work_item' AND c.record_id = w.source_id "
+    "AND c.name = 'counts_for_impact' AND c.value = '1' "
+    "WHERE w.source = 'jira' AND w.status_category = 'done' "
+    "AND w.resolved_at >= ? AND w.resolved_at < ? ORDER BY w.resolved_at, w.key"
+)
+_PR_AUTHORS_SQL = (
+    "SELECT DISTINCT l.to_id AS issue_id, c.source_id AS pr_id, c.author_account AS author "
+    "FROM link l JOIN change_request c ON c.source = 'bitbucket' AND c.source_id = l.from_id "
+    "WHERE l.kind = 'implements' AND l.from_kind = 'change_request' AND l.to_kind = 'work_item' "
+    "AND c.author_account IS NOT NULL AND c.author_account != ''"
+)
+_FIRST_MERGE_SQL = (
+    "SELECT l.to_id AS issue_id, MIN(c.merged_at) AS merged_at "
+    "FROM link l JOIN change_request c ON c.source = 'bitbucket' AND c.source_id = l.from_id "
+    "WHERE l.kind = 'implements' AND l.from_kind = 'change_request' AND l.to_kind = 'work_item' "
+    "AND c.state = 'MERGED' AND c.merged_at IS NOT NULL GROUP BY l.to_id"
+)
+
+
+def actor_for(account: Optional[str]) -> Optional[str]:
+    """Jira and Bitbucket share one account id, so either identity can resolve the person."""
+    return actor_key(("jira", account), ("bitbucket", account))
+
+
+@dataclass
+class Credit:
+    """Who gets the credit for each completed issue.
+
+    `issues` are the countable issues completed in the window, oldest first. `shares` maps an issue id to
+    `{actor_key: share}` (shares of one issue sum to 1; an empty dict means nobody can be credited).
+    `by_pr` holds the issues credited by pull request evidence rather than by assignee.
+    """
+
+    issues: List[sqlite3.Row] = field(default_factory=list)
+    shares: Dict[str, Dict[str, float]] = field(default_factory=dict)
+    by_pr: Set[str] = field(default_factory=set)
+
+
+def completed_issues(conn: sqlite3.Connection, window: Window) -> List[sqlite3.Row]:
+    return conn.execute(_DONE_SQL, (window.start, window.end)).fetchall()
+
+
+def credit_for(conn: sqlite3.Connection, window: Window) -> Credit:
+    """Credit by the authors of linked pull requests, split by their share of those pull requests;
+    the assignee when no usable pull request is linked. Spec 4's `ticket_credit` replaces this."""
+    issues = completed_issues(conn, window)
+    wanted = {row["source_id"] for row in issues}
+    authors: Dict[str, Counter] = {}
+    for row in conn.execute(_PR_AUTHORS_SQL):
+        if row["issue_id"] in wanted:
+            authors.setdefault(row["issue_id"], Counter())[row["author"]] += 1
+    credit = Credit(issues=issues)
+    for row in issues:
+        issue_id = row["source_id"]
+        counts = authors.get(issue_id)
+        if counts:
+            total = sum(counts.values())
+            credit.shares[issue_id] = {actor_for(account): count / total for account, count in counts.items()}
+            credit.by_pr.add(issue_id)
+            continue
+        key = actor_for(row["assignee_account"])
+        credit.shares[issue_id] = {key: 1.0} if key else {}
+    return credit
+
+
+def first_merges(conn: sqlite3.Connection) -> Dict[str, str]:
+    """The earliest merge time of the merged pull requests linked to each issue."""
+    return {row["issue_id"]: row["merged_at"] for row in conn.execute(_FIRST_MERGE_SQL)}
+
+
+def credit_note(credit: Credit) -> Optional[str]:
+    """Explains how much was credited by pull request evidence; nothing to say when none was."""
+    if not credit.by_pr:
+        return None
+    credited = [row for row in credit.issues if credit.shares.get(row["source_id"])]
+    return CREDIT_NOTE.format(pr=len(credit.by_pr), n=len(credited), rest=len(credited) - len(credit.by_pr))
+
+
+@dataclass
+class Scoped:
+    """Completed issues for one scope: each with the fraction of it credited inside the scope, those
+    nobody can be credited for, and how many were left out because their credit is outside the scope."""
+
+    items: List[Tuple[sqlite3.Row, float]] = field(default_factory=list)
+    unassigned: List[sqlite3.Row] = field(default_factory=list)
+    outside: int = 0
+
+
+def scoped(conn: sqlite3.Connection, scope: Scope, credit: Credit) -> Scoped:
+    """Under a team only credited members count (an unmapped account or a non-member is outside the
+    team); with no team everyone counts, unmapped accounts included. Excluded people never count."""
+    people = People(conn)
+    result = Scoped()
+    for row in credit.issues:
+        shares = credit.shares.get(row["source_id"]) or {}
+        if not shares:
+            result.unassigned.append(row)
+            continue
+        kept = 0.0
+        for key, share in shares.items():
+            person = people.resolve(key)
+            if person is not None and people.is_excluded(person):
+                continue
+            if scope.members is not None and person not in scope.members:
+                continue
+            kept += share
+        if kept > 1e-9:
+            result.items.append((row, min(kept, 1.0)))
+        else:
+            result.outside += 1
+    return result

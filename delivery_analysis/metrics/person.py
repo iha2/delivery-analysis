@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import sqlite3
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
-from delivery_analysis.metrics.people import Scope
+from delivery_analysis.metrics.credit import credit_for
+from delivery_analysis.metrics.people import People, Scope
 from delivery_analysis.metrics.window import Window, weekly
 
 
@@ -60,7 +61,24 @@ def person_detail(conn: sqlite3.Connection, person_id: str, window: Window, scop
         f"AND {commit_where}",
         accounts + emails + [window.start, window.end] + commit_params,
     ).fetchall()
-    return {
+    issues_done: Optional[List[Dict[str, Any]]] = None
+    if conn.execute("SELECT 1 FROM work_item WHERE source = 'jira' LIMIT 1").fetchone() is not None:
+        credit = credit_for(conn, window)
+        people = People(conn)
+        issues_done = []
+        for row in reversed(credit.issues):  # credit.issues is oldest first
+            share = sum(
+                part for key, part in (credit.shares.get(row["source_id"]) or {}).items()
+                if people.resolve(key) == person_id
+            )
+            if share:
+                issues_done.append({
+                    "key": row["key"], "type": row["type"], "points": row["story_points"],
+                    "resolved_at": row["resolved_at"], "share": round(share, 2),
+                    "basis": "pull request" if row["source_id"] in credit.by_pr else "assignee",
+                })
+        issues_done = issues_done[:200]
+    result = {
         "person": {
             "person_id": person["person_id"],
             "name": person["display_name"],
@@ -74,3 +92,6 @@ def person_detail(conn: sqlite3.Connection, person_id: str, window: Window, scop
         "reviews_pending": [dict(row) for row in reviews_pending],
         "commits_weekly": weekly(window, (row["committed_at"] for row in stamps)),
     }
+    if issues_done is not None:
+        result["issues_done"] = issues_done
+    return result

@@ -3,13 +3,14 @@ from __future__ import annotations
 import sqlite3
 from typing import Any, Dict, List, Optional, Tuple
 
+from delivery_analysis.metrics.credit import credit_for, credit_note, scoped
 from delivery_analysis.metrics.people import People, Scope, actor_key
 from delivery_analysis.metrics.registry import Observations
 from delivery_analysis.metrics.window import Window, hours_between, weekly
 
 UNASSIGNED_NOTE = "{n} completed issue(s) have no assignee and are not attributed to anyone."
 NO_START_NOTE = "{n} completed issue(s) never entered In Progress, so they have no cycle time."
-OUTSIDE_NOTE = "{n} completed issue(s) are assigned outside this team and are not counted."
+OUTSIDE_NOTE = "{n} completed issue(s) belong to someone outside this team and are not counted."
 NO_DATE_NOTE = "{n} done issue(s) have no resolved date and are not counted."
 NO_POINTS_NOTE = "{n} completed issue(s) have no story points and are not counted."
 
@@ -75,17 +76,35 @@ def _notes(obs: Observations, unassigned: int, outside: int, unresolved: int = 0
         obs.notes.append(NO_DATE_NOTE.format(n=unresolved))
 
 
+def _counts(people: People, scope: Scope, key: str) -> bool:
+    """Under a team only members count; with no team everyone does (the registry drops excluded people)."""
+    if scope.members is None:
+        return True
+    return people.resolve(key) in scope.members
+
+
 def issues_done(conn: sqlite3.Connection, scope: Scope, window: Window) -> Observations:
+    """Each credited author gets the issue once (an issue with two authors adds 1 to each)."""
+    credit = credit_for(conn, window)
+    people = People(conn)
     obs = Observations()
-    unassigned = 0
-    rows, outside = _done(conn, scope, window)
-    for row in rows:
-        key = _key(row["assignee_account"])
-        if key is None:
-            unassigned += 1
+    unassigned = outside = 0
+    for row in credit.issues:
+        shares = credit.shares.get(row["source_id"]) or {}
+        if not shares:
+            if scope.members is None:
+                unassigned += 1
             continue
-        obs.add(key)
+        counted = [key for key in shares if _counts(people, scope, key)]
+        if not counted:
+            outside += 1
+            continue
+        for key in counted:
+            obs.add(key)
     _notes(obs, unassigned, outside, _unresolved(conn, scope))
+    explained = credit_note(credit)
+    if explained:
+        obs.notes.append(explained)
     return obs
 
 
@@ -110,27 +129,42 @@ def cycle_time(conn: sqlite3.Connection, scope: Scope, window: Window) -> Observ
 
 
 def story_points_done(conn: sqlite3.Connection, scope: Scope, window: Window) -> Observations:
+    """An issue's points are split by each credited author's share of its linked pull requests."""
+    credit = credit_for(conn, window)
+    people = People(conn)
     obs = Observations()
-    unpointed = unassigned = 0
-    rows, outside = _done(conn, scope, window)
-    for row in rows:
+    unpointed = unassigned = outside = 0
+    for row in credit.issues:
+        shares = credit.shares.get(row["source_id"]) or {}
+        if not shares and scope.members is not None:
+            continue
+        counted = {key: share for key, share in shares.items() if _counts(people, scope, key)}
+        if shares and not counted:
+            outside += 1
+            continue
         if row["story_points"] is None:
             unpointed += 1
             continue
-        key = _key(row["assignee_account"])
-        if key is None:
+        if not shares:
             unassigned += 1
             continue
-        obs.add(key, row["story_points"])
+        for key, share in counted.items():
+            obs.add(key, row["story_points"] * share)
     if unpointed:
         obs.notes.append(NO_POINTS_NOTE.format(n=unpointed))
     _notes(obs, unassigned, outside, _unresolved(conn, scope))
+    explained = credit_note(credit)
+    if explained:
+        obs.notes.append(explained)
     return obs
 
 
 def issues_done_weekly(
     conn: sqlite3.Connection, scope: Scope, window: Window
 ) -> Tuple[List[Dict[str, Any]], List[str]]:
-    """Completed issues per local week; under a team only issues of its members count."""
-    rows, _ = _done(conn, scope, window)
+    """Completed issues per local week, each counted once. Under a team an issue counts when a team member
+    is credited for it; with no team every completed issue counts, assigned or not."""
+    credit = credit_for(conn, window)
+    sc = scoped(conn, scope, credit)
+    rows = [row for row, _ in sc.items] + (sc.unassigned if scope.members is None else [])
     return weekly(window, [row["resolved_at"] for row in rows]), []
