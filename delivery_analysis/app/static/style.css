@@ -84,3 +84,9 @@ summary { cursor: pointer; color: var(--text-secondary); font-size: .85rem; }
 .hidden { display: none; }
 a { color: var(--series-1); }
 .button-link { background: none; border: none; padding: 0; color: var(--series-1); text-decoration: underline; }
+
+/* People matrix */
+.table-scroll { overflow-x: auto; }
+.table-scroll th.sticky-col, .table-scroll td.sticky-col { position: sticky; left: 0; background: var(--surface-1); z-index: 1; }
+th.sortable { cursor: pointer; user-select: none; white-space: nowrap; }
+th.sortable:hover { color: var(--text-primary); }

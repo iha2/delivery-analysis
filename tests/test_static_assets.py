@@ -5,7 +5,7 @@ import pytest
 
 STATIC = Path(__file__).resolve().parents[1] / "delivery_analysis" / "app" / "static"
 PAGE_FILES = sorted(p for p in STATIC.glob("*.html") if p.name != "index.html")
-NAV_LABELS = ["Dashboard", "Rankings", "Selection", "Teams", "Sources", "Settings", "Ask"]
+NAV_LABELS = ["Dashboard", "Rankings", "People", "Selection", "Teams", "Sources", "Settings", "Ask"]
 API_ROOTS = {"teams", "metrics", "people", "repos", "sources", "refresh", "settings", "identities", "health", "tickets"}
 OWN_FILES = [p for p in STATIC.rglob("*") if p.suffix in (".html", ".js", ".css") and "vendor" not in p.parts]
 
@@ -165,3 +165,37 @@ def test_dashboard_impact_per_token_cards_read_the_api_and_compute_nothing():
     block = script[script.index("function impactPerToken"):script.index("function throughput")]
     assert "reduce(" not in block and " / " not in block and "sum(" not in block
     assert 'type: "line"' in block and "stacked: true" in block
+
+
+def test_people_page_has_the_expected_ids_and_scripts():
+    html = read("people.html")
+    assert "<title>People · Delivery Analytics</title>" in html
+    assert "<h2>People</h2>" in html
+    assert 'id="include-inactive"' in html and 'id="people-matrix"' in html
+    assert "/static/pages/people.js" in html and "chart.umd.js" not in html
+    assert "Click a column to sort; click a name for detail." in html
+
+
+def test_every_nav_has_the_people_link_right_after_rankings():
+    for page in PAGE_FILES:
+        html = page.read_text(encoding="utf-8")
+        assert '<a href="/rankings">Rankings</a>\n    <a href="/people">People</a>' in html, page.name
+
+
+def test_people_js_reads_only_fields_from_the_contract():
+    script = read("pages", "people.js")
+    assert '"/api/people-matrix"' in script and "DA.page(" in script
+    allowed = {"window", "columns", "rows", "notes", "person_id", "name", "cells", "label", "unit", "better",
+               "description", "needs", "status", "missing", "value", "sample", "ranked", "rank", "confidence",
+               "start", "end", "days", "length", "sort", "dir", "inactive", "id", "team"}
+    for field in re.findall(r"\b(?:r|data|row|c|col|column|cell)\.([a-z_]+)", script):
+        assert field in allowed or field in {"push", "map", "filter", "slice", "sort", "forEach", "find", "join",
+                                             "reverse", "checked", "value", "textContent", "appendChild"}, field
+    for field in ("status", "ranked", "better", "description", "sample", "missing", "person_id", "cells"):
+        assert field in script
+
+
+def test_people_js_computes_no_numbers():
+    script = read("pages", "people.js")
+    for banned in ("reduce(", "sum(", "Math.", "average", "mean(", "+="):
+        assert banned not in script, banned
