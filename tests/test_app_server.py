@@ -4,7 +4,7 @@ from delivery_analysis.app.server import PAGES, create_app
 from delivery_analysis.store import db
 from delivery_analysis.store import sync_state as ss
 
-NAV_LABELS = ["Dashboard", "Rankings", "Selection", "Teams", "Sources", "Settings", "Ask"]
+NAV_LABELS = ["Dashboard", "Rankings", "People", "Selection", "Teams", "Sources", "Settings", "Ask"]
 
 
 def test_server_starts_on_an_empty_database_in_a_new_folder(tmp_path):
@@ -29,7 +29,7 @@ def test_health_reports_stale_sources_with_their_error(tmp_path):
 
 def test_every_page_serves_the_shell_with_all_seven_nav_links(tmp_path):
     client = TestClient(create_app(tmp_path / "d.sqlite"), base_url="http://127.0.0.1")
-    assert len(PAGES) == 8
+    assert len(PAGES) == 9
     for page in PAGES:
         response = client.get(page)
         assert response.status_code == 200

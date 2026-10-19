@@ -14,6 +14,7 @@ from delivery_analysis.connectors.bitbucket.client import BitbucketClient, Bitbu
 from delivery_analysis.connectors.bitbucket.resolve import resolve_repository
 from delivery_analysis.connectors.registry import build_connectors
 from delivery_analysis.metrics.catalog import BY_NAME, METRICS
+from delivery_analysis.metrics.matrix import people_matrix
 from delivery_analysis.metrics.people import (
     People, map_identity, set_member_status, team_scope, unmapped_accounts,
 )
@@ -244,6 +245,26 @@ def build_router(ctx: AppContext) -> APIRouter:
         if "error" in result:
             result["error"] = ctx.clean(result["error"])
         return result
+
+    @router.get("/people-matrix")
+    def matrix(
+        team: Optional[str] = None,
+        window: Optional[str] = None,
+        start: Optional[str] = Query(None, alias="from"),
+        end: Optional[str] = Query(None, alias="to"),
+        include_inactive: bool = False,
+    ) -> Dict[str, Any]:
+        with _db(ctx) as conn:
+            try:
+                scope = team_scope(conn, team, include_inactive)
+                return people_matrix(
+                    conn, scope, _window(ctx, conn, team, window, start, end),
+                    history_days=ctx.settings.window_days,
+                )
+            except LookupError as exc:
+                raise _fail(ctx, 404, exc)
+            except ValueError as exc:
+                raise _fail(ctx, 400, exc)
 
     @router.get("/people/{person_id}")
     def person(

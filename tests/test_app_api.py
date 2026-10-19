@@ -158,3 +158,15 @@ def test_pages_and_static_files_are_served(tmp_path):
     for route in PAGES:
         response = client.get(route)
         assert response.status_code == 200 and "text/html" in response.headers["content-type"]
+
+
+def test_people_matrix_endpoint(tmp_path):
+    client, *_ = make(tmp_path)
+    body = client.get("/api/people-matrix", params={"team": "t1", "window": "month:2026-09"}).json()
+    assert set(body) == {"window", "columns", "rows", "notes"}
+    assert body["columns"][0]["name"] == "prs_merged"
+    ann = [r for r in body["rows"] if r["person_id"] == "p-ann"][0]
+    assert ann["cells"]["prs_merged"]["value"] == 3.0
+    assert "p-cy" not in [r["person_id"] for r in body["rows"]]
+    assert client.get("/api/people-matrix", params={"team": "nope"}).status_code == 404
+    assert client.get("/api/people-matrix", params={"window": "weekly"}).status_code == 400
