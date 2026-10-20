@@ -41,3 +41,9 @@ def test_every_page_serves_the_shell_with_all_seven_nav_links(tmp_path):
 def test_unknown_page_is_404(tmp_path):
     client = TestClient(create_app(tmp_path / "d.sqlite"), base_url="http://127.0.0.1")
     assert client.get("/nope").status_code == 404
+
+
+def test_pages_and_static_files_are_revalidated_so_updates_show_without_a_hard_refresh(tmp_path):
+    client = TestClient(create_app(tmp_path / "d.sqlite"), base_url="http://127.0.0.1")
+    for url in ("/person", "/static/pages/person.js", "/static/style.css"):
+        assert client.get(url).headers.get("cache-control") == "no-cache", url

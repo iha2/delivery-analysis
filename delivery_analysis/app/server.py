@@ -91,7 +91,10 @@ def create_app(
             site = request.headers.get("sec-fetch-site", "").lower()
             if site in ("cross-site", "same-site") or (origin and not _origin_ok(origin)):
                 return JSONResponse({"detail": "Cross-site requests are not allowed."}, status_code=403)
-        return await call_next(request)
+        response = await call_next(request)
+        if not request.url.path.startswith("/api/"):
+            response.headers["Cache-Control"] = "no-cache"  # pages and scripts change with the app; always revalidate
+        return response
 
     @app.get("/api/health")
     def health() -> Dict[str, Any]:
