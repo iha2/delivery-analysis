@@ -38,6 +38,13 @@ PR_FIELDS = (
     "values.created_on,values.updated_on,values.closed_by.account_id,values.merge_commit.hash,"
     "values.participants.role,values.participants.approved,values.participants.user.account_id"
 )
+COMMENT_PARAMS = {
+    "pagelen": 100,
+    "fields": (
+        "next,values.id,values.user.account_id,values.created_on,values.deleted,values.inline,"
+        "values.parent.id,values.resolution"
+    ),
+}
 
 
 class BitbucketConnector:
@@ -218,6 +225,41 @@ class BitbucketConnector:
         finally:
             conn.close()
 
+    def _pending_comments(self, uuid: str) -> List[Dict[str, str]]:
+        """Pull requests detailed before comments were fetched (or changed since), newest first."""
+        conn = connect(self._db_path)
+        try:
+            rows = conn.execute(
+                "SELECT d.record_id AS source_id, d.value AS detailed FROM property d "
+                "LEFT JOIN property c ON c.record_kind = 'change_request' AND c.record_id = d.record_id "
+                "AND c.name = 'comments_detail_on' "
+                "WHERE d.record_kind = 'change_request' AND d.name = 'detail_updated_on' AND d.record_id LIKE ? "
+                "AND (c.value IS NULL OR c.value != d.value) ORDER BY d.value DESC",
+                (uuid + "#%",),
+            ).fetchall()
+            return [{"source_id": r["source_id"], "detailed": r["detailed"]} for r in rows]
+        finally:
+            conn.close()
+
+    def _backfill_comments(self, uuid: str, repo_path: str) -> Iterator[Batch]:
+        """Fetch only the comments of pull requests that were detailed without them."""
+        for pending in self._pending_comments(uuid):
+            if self._client.budget_left < self._remaining * RESERVE_PER_REPO + 1:
+                return
+            source_id, detailed = pending["source_id"], pending["detailed"]
+            number = source_id.split("#", 1)[1]
+            try:
+                comments = self._optional_items(f"{repo_path}/pullrequests/{number}/comments", COMMENT_PARAMS)
+            except (BudgetExhausted, RateLimitedError):
+                return
+            except AuthError:
+                raise
+            except BitbucketError:
+                continue  # retried on the next sync
+            records = normalize.review_comment_records(source_id, comments)
+            records.append(normalize.prop("change_request", source_id, "comments_detail_on", detailed))
+            yield Batch(records)
+
     def _all_items(self, path: str, params: Dict[str, Any]) -> List[Dict[str, Any]]:
         items: List[Dict[str, Any]] = []
         for page in self._client.pages(path, params):
@@ -235,7 +277,7 @@ class BitbucketConnector:
         succeeded = 0
         last_error: Optional[BitbucketError] = None
         for pending in self._pending_detail(uuid):
-            if self._client.budget_left < self._remaining * RESERVE_PER_REPO + 3:
+            if self._client.budget_left < self._remaining * RESERVE_PER_REPO + 4:
                 return
             source_id, updated = pending["source_id"], pending["updated"]
             number = source_id.split("#", 1)[1]
@@ -244,6 +286,7 @@ class BitbucketConnector:
                 activity = self._all_items(f"{base}/activity", {"pagelen": PR_PAGELEN})
                 commits = self._optional_items(f"{base}/commits", {"pagelen": 100, "fields": "next,values.hash"})
                 diffstat = self._optional_items(f"{base}/diffstat", {"pagelen": 100})
+                comments = self._optional_items(f"{base}/comments", COMMENT_PARAMS)
             except (BudgetExhausted, RateLimitedError):
                 return
             except NotFoundError:
@@ -268,11 +311,14 @@ class BitbucketConnector:
             records: List[Record] = list(events)
             records.append(Record("change_request", values))
             records.extend(normalize.commit_link_records(uuid, source_id, commits))
+            records.extend(normalize.review_comment_records(source_id, comments))
             if summary.closed_at is not None:
                 records.append(normalize.prop("change_request", source_id, "times_from", "activity"))
             records.append(normalize.prop("change_request", source_id, "detail_updated_on", updated))
+            records.append(normalize.prop("change_request", source_id, "comments_detail_on", updated))
             raw = RawPayload(SOURCE, source_id, "pr_activity", json.dumps(activity, sort_keys=True))
             succeeded += 1
             yield Batch(records, [raw])
+        yield from self._backfill_comments(uuid, repo_path)
         if last_error is not None and succeeded == 0:
             raise last_error  # every pull request failed the same way: that is a real problem, not a skip

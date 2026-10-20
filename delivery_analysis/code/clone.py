@@ -1,0 +1,91 @@
+"""Clone or fetch a Bitbucket repository locally; the credential reaches git only through the environment."""
+from __future__ import annotations
+
+import base64
+import os
+import shutil
+import subprocess
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Callable, Dict, List, Optional
+
+from delivery_analysis.settings import redact
+
+DEFAULT_USER = "x-bitbucket-api-token-auth"
+FETCH_REFSPEC = "+refs/heads/*:refs/remotes/origin/*"
+
+
+class CodeError(RuntimeError):
+    """A git step failed; the message is already redacted."""
+
+
+@dataclass(frozen=True)
+class CloneResult:
+    path: Path
+    head_sha: str
+    fetched: bool
+
+
+def repo_dir(results_dir: Path, repository_id: str) -> Path:
+    return Path(results_dir) / "code" / repository_id.strip("{}")
+
+
+def basic_header(token: str) -> str:
+    """Base64 of the Basic credentials: `email:token` as given, else the default user with the bare token."""
+    pair = token if ":" in token else "%s:%s" % (DEFAULT_USER, token)
+    return base64.b64encode(pair.encode("utf-8")).decode("ascii")
+
+
+def git_env(token: str, base: Optional[Dict[str, str]] = None) -> Dict[str, str]:
+    env = dict(os.environ if base is None else base)
+    env["GIT_CONFIG_COUNT"] = "1"
+    env["GIT_CONFIG_KEY_0"] = "http.extraHeader"
+    env["GIT_CONFIG_VALUE_0"] = "Authorization: Basic " + basic_header(token)
+    env["GIT_TERMINAL_PROMPT"] = "0"
+    return env
+
+
+def _secrets(token: str) -> List[str]:
+    return [token, token.strip(), basic_header(token), "Authorization: Basic " + basic_header(token)]
+
+
+def _git(
+    argv: List[str], env: Dict[str, str], token: str, run: Callable[..., Any]
+) -> "subprocess.CompletedProcess[str]":
+    try:
+        proc = run(
+            argv,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            env=env,
+        )
+    except FileNotFoundError:
+        raise CodeError("git is not installed or not on PATH")
+    except OSError as exc:
+        raise CodeError(redact("could not run git: %s" % exc, _secrets(token)))
+    if proc.returncode != 0:
+        detail = ((proc.stderr or "") + (proc.stdout or "")).strip()
+        step = argv[1] if len(argv) > 1 else "git"
+        raise CodeError(redact("git %s failed: %s" % (step, detail), _secrets(token)))
+    return proc
+
+
+def ensure_clone(
+    url: str, dest: Path, token: str, *, run: Callable[..., Any] = subprocess.run
+) -> CloneResult:
+    dest = Path(dest)
+    env = git_env(token)
+    fetched = (dest / ".git").is_dir()
+    if fetched:
+        _git(["git", "-C", str(dest), "fetch", "--prune", "--no-tags", "origin", FETCH_REFSPEC], env, token, run)
+    else:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            _git(["git", "clone", "--no-tags", "--quiet", url, str(dest)], env, token, run)
+        except CodeError:
+            shutil.rmtree(dest, ignore_errors=True)
+            raise
+    head = _git(["git", "-C", str(dest), "rev-parse", "HEAD"], env, token, run)
+    return CloneResult(path=dest, head_sha=(head.stdout or "").strip(), fetched=fetched)

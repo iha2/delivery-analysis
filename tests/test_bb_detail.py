@@ -73,13 +73,13 @@ def test_running_out_of_budget_is_progress_not_failure_and_the_next_run_continue
     fake = FakeBitbucket()
     standard(fake)
     conn, path = build(tmp_path, fake)
-    # validate 2 + repository 1 + commits 1 + pull request list 1 = 5; each detail is 3 requests
-    first = run_sync(conn, [connector_for(path, fake, budget=8)])
+    # validate 2 + repository 1 + commits 1 + pull request list 1 = 5; each detail is 4 requests
+    first = run_sync(conn, [connector_for(path, fake, budget=9)])
     assert first[0].status == "ok"
     assert repo_selection.detail_progress(conn, UUID_A) == (1, 3)
     newest = rows(conn, "SELECT record_id FROM property WHERE name = 'detail_updated_on'")
     assert [r["record_id"] for r in newest] == [f"{UUID_A}#3"]
-    second = run_sync(conn, [connector_for(path, fake, budget=11)])
+    second = run_sync(conn, [connector_for(path, fake, budget=13)])
     assert second[0].status == "ok"
     assert repo_selection.detail_progress(conn, UUID_A) == (3, 3)
 

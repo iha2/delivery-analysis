@@ -50,6 +50,20 @@ def approval(date, account="acc-bob"):
     return {"approval": {"date": date, "user": {"account_id": account}}, "pull_request": {"id": 0}}
 
 
+def api_comment(comment_id, date, account="acc-bob", deleted=False, path=None, to=None, from_=None,
+                parent=None, resolution=None):
+    """A value from /pullrequests/{n}/comments (the activity payload leaves inline and resolution empty)."""
+    return {
+        "id": comment_id,
+        "created_on": date,
+        "deleted": deleted,
+        "user": {"account_id": account},
+        "inline": {"path": path, "to": to, "from": from_} if path else None,
+        "parent": {"id": parent} if parent else None,
+        "resolution": resolution,
+    }
+
+
 class FakeBitbucket:
     BASE = "https://api.bitbucket.org/2.0"
 
@@ -61,7 +75,8 @@ class FakeBitbucket:
         self.errors: Dict[str, int] = {}
         self.pr_scope_missing = False
 
-    def add_repo(self, slug, uuid, commits=None, prs=None, activity=None, pr_commits=None, diffstat=None):
+    def add_repo(self, slug, uuid, commits=None, prs=None, activity=None, pr_commits=None, diffstat=None,
+                 comments=None):
         self.repos[slug] = {
             "uuid": uuid,
             "slug": slug,
@@ -70,6 +85,7 @@ class FakeBitbucket:
             "activity": activity or {},
             "pr_commits": pr_commits or {},
             "diffstat": diffstat or {},
+            "comments": comments or {},
         }
 
     def transport(self) -> httpx.MockTransport:
@@ -143,6 +159,7 @@ class FakeBitbucket:
                     "activity": repo["activity"],
                     "commits": repo["pr_commits"],
                     "diffstat": repo["diffstat"],
+                    "comments": repo["comments"],
                 }.get(rest[2])
                 if source is not None:
                     return self._page(request, source.get(int(rest[1]), []))

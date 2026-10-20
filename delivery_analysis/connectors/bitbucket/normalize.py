@@ -176,6 +176,34 @@ def activity_records(
     return events, summary
 
 
+def review_comment_records(pr_source_id: str, comments: Sequence[Mapping[str, Any]]) -> List[Record]:
+    """Review comments from /pullrequests/{n}/comments; ids match the comment change_event rows."""
+    records: List[Record] = []
+    for item in comments:
+        if item.get("deleted"):
+            continue
+        inline = item.get("inline") or {}
+        line = inline.get("to") or inline.get("from")
+        parent = (item.get("parent") or {}).get("id")
+        records.append(
+            Record(
+                "review_comment",
+                {
+                    "source": SOURCE,
+                    "source_id": f"{pr_source_id}:comment:{item.get('id')}",
+                    "change_request_id": pr_source_id,
+                    "actor_account": (item.get("user") or {}).get("account_id") or None,
+                    "created_at": to_utc_iso(item.get("created_on")),
+                    "path": inline.get("path") or None,
+                    "line": int(line) if line else None,
+                    "parent_id": f"{pr_source_id}:comment:{parent}" if parent else None,
+                    "resolved": 1 if item.get("resolution") else 0,
+                },
+            )
+        )
+    return records
+
+
 def commit_link_records(
     repo_uuid: str, pr_source_id: str, commits: Sequence[Mapping[str, Any]]
 ) -> List[Record]:

@@ -1,14 +1,15 @@
-"""Per-person impact = delivery + participation, in story points.
+"""Per-person impact = delivery + participation, in story points, read from the stored impact build.
 
-Each completed issue's points are shared out by evidence on its linked pull requests: the PR author earns
-delivery evidence (1 per linked PR plus 1 per commit on it by the commit author), everyone else earns
-participation evidence (1 per comment or approval). With no evidence the assignee delivers all of it.
+`impact_build.rebuild_impact` values each completed issue by its story points and the code it touched, gives
+delivery to the pull request owners (less a penalty per fixed review comment) and participation to reviewers
+whose comments were fixed. Reviewing counts (`prs_reviewed`, `review_value`) come straight from comments and
+approvals on other people's pull requests.
 """
 from __future__ import annotations
 
 import sqlite3
 from collections import defaultdict
-from typing import Dict, List, Optional
+from typing import Dict, List
 
 from delivery_analysis.metrics import bitbucket as bb
 from delivery_analysis.metrics import tokens as tk
@@ -21,19 +22,6 @@ Shares = Dict[str, Dict[str, Dict[str, float]]]
 
 OUTSIDE_NOTE = "{points:g} impact point(s) went to people outside this team and are not counted."
 
-_PRS_SQL = (
-    "SELECT DISTINCT l.to_id AS issue_id, c.source_id AS pr_id, c.author_account AS author "
-    "FROM link l JOIN change_request c ON c.source = 'bitbucket' AND c.source_id = l.from_id "
-    "WHERE l.kind = 'implements' AND l.from_kind = 'change_request' AND l.to_kind = 'work_item'"
-)
-_COMMITS_SQL = (
-    "SELECT change_request_id AS pr_id, author_account, author_email FROM vcs_commit "
-    "WHERE source = 'bitbucket' AND change_request_id IS NOT NULL"
-)
-_EVENTS_SQL = (
-    "SELECT change_request_id AS pr_id, actor_account FROM change_event WHERE source = 'bitbucket' "
-    "AND type IN ('comment', 'approved') AND actor_account IS NOT NULL AND actor_account != ''"
-)
 _MERGES_SQL = (
     "SELECT l.to_id AS issue_id, c.merged_at FROM link l JOIN change_request c ON c.source = 'bitbucket' "
     "AND c.source_id = l.from_id WHERE l.kind = 'implements' AND l.from_kind = 'change_request' "
@@ -46,51 +34,17 @@ def _cohort(conn: sqlite3.Connection, window: Window) -> List[sqlite3.Row]:
 
 
 def impact_shares(conn: sqlite3.Connection, window: Window) -> Shares:
-    """{issue_id: {actor_key: {"delivery": points, "participation": points}}} for the window's cohort."""
-    cohort = _cohort(conn, window)
-    wanted = {row["source_id"] for row in cohort}
-    prs: Dict[str, Dict[str, Optional[str]]] = defaultdict(dict)  # issue -> pr -> author account
-    for row in conn.execute(_PRS_SQL):
-        if row["issue_id"] in wanted:
-            prs[row["issue_id"]][row["pr_id"]] = row["author"] or None
-    authors = {pr_id: author for by_pr in prs.values() for pr_id, author in by_pr.items()}
-    commits: Dict[str, List[Optional[str]]] = defaultdict(list)
-    for row in conn.execute(_COMMITS_SQL):
-        if row["pr_id"] in authors:
-            email = (row["author_email"] or "").strip().lower() or None
-            commits[row["pr_id"]].append(
-                actor_key(("jira", row["author_account"]), ("bitbucket", row["author_account"]), ("email", email))
-            )
-    events: Dict[str, List[Optional[str]]] = defaultdict(list)
-    for row in conn.execute(_EVENTS_SQL):
-        if row["pr_id"] in authors and row["actor_account"] != authors[row["pr_id"]]:
-            events[row["pr_id"]].append(actor_for(row["actor_account"]))
+    """{issue_id: {actor_key: {"delivery": points, "participation": points}}} from the stored impact build,
+    for issues resolved in the window. Delivery is already net of the fix penalty."""
     out: Shares = {}
-    for issue in cohort:
-        issue_id, points = issue["source_id"], float(issue["story_points"])
-        delivery: Dict[str, float] = defaultdict(float)
-        participation: Dict[str, float] = defaultdict(float)
-        for pr_id, author in prs.get(issue_id, {}).items():
-            if author:
-                delivery[actor_for(author)] += 1
-            for key in commits.get(pr_id, []):
-                if key:
-                    delivery[key] += 1
-            for key in events.get(pr_id, []):
-                if key:
-                    participation[key] += 1
-        total = sum(delivery.values()) + sum(participation.values())
-        if total > 0:
-            out[issue_id] = {
-                key: {
-                    "delivery": points * delivery.get(key, 0.0) / total,
-                    "participation": points * participation.get(key, 0.0) / total,
-                }
-                for key in set(delivery) | set(participation)
-            }
-            continue
-        key = actor_for(issue["assignee_account"])
-        out[issue_id] = {key: {"delivery": points, "participation": 0.0}} if key else {}
+    for row in conn.execute(
+        "SELECT issue_id, actor_key, delivery, participation FROM impact_share "
+        "WHERE resolved_at >= ? AND resolved_at < ? ORDER BY issue_id, actor_key",
+        (window.start, window.end),
+    ):
+        out.setdefault(row["issue_id"], {})[row["actor_key"]] = {
+            "delivery": row["delivery"], "participation": row["participation"],
+        }
     return out
 
 
@@ -199,6 +153,38 @@ def review_responsiveness(conn, scope: Scope, window: Window) -> Observations:
         hours = hours_between(row["created"], row["first"])
         if row["in_window"] and hours is not None and hours >= 0:
             obs.add(actor_key(("bitbucket", row["account"])), hours)
+    return obs
+
+
+def _reviews(conn: sqlite3.Connection, scope: Scope, window: Window):
+    where, params = scope.repo_filter("c.repository_id")
+    return conn.execute(
+        "SELECT e.actor_account AS account, e.change_request_id AS pr_id, e.type AS type "
+        "FROM change_event e JOIN change_request c ON c.source = e.source AND c.source_id = e.change_request_id "
+        "WHERE e.source = 'bitbucket' AND e.type IN ('comment', 'approved') AND e.actor_account IS NOT NULL "
+        "AND e.actor_account != '' AND e.occurred_at >= ? AND e.occurred_at < ? "
+        "AND (c.author_account IS NULL OR e.actor_account != c.author_account) "
+        f"AND {where} ORDER BY e.occurred_at, e.source_id",
+        [window.start, window.end] + params,
+    ).fetchall()
+
+
+def prs_reviewed(conn, scope: Scope, window: Window) -> Observations:
+    """Distinct pull requests owned by others where the person left at least one comment in the window."""
+    seen = set()
+    obs = Observations(notes=bb._detail_note(conn, scope))
+    for row in _reviews(conn, scope, window):
+        if row["type"] == "comment" and (row["account"], row["pr_id"]) not in seen:
+            seen.add((row["account"], row["pr_id"]))
+            obs.add(actor_for(row["account"]), 1.0)
+    return obs
+
+
+def review_value(conn, scope: Scope, window: Window) -> Observations:
+    """Comments plus half a point per approval on other people's pull requests in the window."""
+    obs = Observations(notes=bb._detail_note(conn, scope))
+    for row in _reviews(conn, scope, window):
+        obs.add(actor_for(row["account"]), 1.0 if row["type"] == "comment" else 0.5)
     return obs
 
 
