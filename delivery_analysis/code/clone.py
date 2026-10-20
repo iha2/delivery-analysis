@@ -38,9 +38,11 @@ def basic_header(token: str) -> str:
 
 def git_env(token: str, base: Optional[Dict[str, str]] = None) -> Dict[str, str]:
     env = dict(os.environ if base is None else base)
-    env["GIT_CONFIG_COUNT"] = "1"
+    env["GIT_CONFIG_COUNT"] = "2"
     env["GIT_CONFIG_KEY_0"] = "http.extraHeader"
     env["GIT_CONFIG_VALUE_0"] = "Authorization: Basic " + basic_header(token)
+    env["GIT_CONFIG_KEY_1"] = "core.longpaths"  # deep paths exceed Windows' 260-character limit
+    env["GIT_CONFIG_VALUE_1"] = "true"
     env["GIT_TERMINAL_PROMPT"] = "0"
     return env
 

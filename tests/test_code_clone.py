@@ -27,7 +27,9 @@ def test_repo_dir_strips_braces(tmp_path):
 def test_git_env_bare_token_uses_default_user():
     env = git_env(TOKEN)
     assert env["GIT_TERMINAL_PROMPT"] == "0"
-    assert env["GIT_CONFIG_COUNT"] == "1"
+    assert env["GIT_CONFIG_COUNT"] == "2"
+    assert env["GIT_CONFIG_KEY_1"] == "core.longpaths"
+    assert env["GIT_CONFIG_VALUE_1"] == "true"
     assert env["GIT_CONFIG_KEY_0"] == "http.extraHeader"
     assert env["GIT_CONFIG_VALUE_0"] == "Authorization: Basic " + HEADER
 
