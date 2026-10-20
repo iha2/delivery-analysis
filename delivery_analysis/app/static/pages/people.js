@@ -5,7 +5,7 @@
 
   function sortState(columns) {
     const params = new URLSearchParams(window.location.search);
-    const name = params.get("sort") || "";
+    const name = params.get("sort") || "impact_points";
     const col = columns.find(function (c) { return c.name === name; });
     if (!col) { return { name: "", dir: "" }; }
     const dir = params.get("dir") || (col.better === "lower" ? "asc" : "desc");
@@ -32,6 +32,16 @@
     return present.concat(absent, unmapped);
   }
 
+  const GROUPS = [["impact", "Impact"], ["delivery", "Delivery"], ["participation", "Participation"]];
+
+  function groupOf(col) { return col.group || ""; }
+
+  function startsGroup(shown, i) { return i === 0 || groupOf(shown[i - 1]) !== groupOf(shown[i]); }
+
+  function cellClass(shown, i) {
+    return "num" + (groupOf(shown[i]) === "impact" ? " group-impact" : "") + (startsGroup(shown, i) ? " group-start" : "");
+  }
+
   function clickHeader(col) {
     const sort = sortState(last.columns);
     let dir = col.better === "lower" ? "asc" : "desc";
@@ -46,24 +56,34 @@
     const shown = r.columns.filter(function (c) { return c.status === "ok"; });
     const waiting = r.columns.filter(function (c) { return c.status === "waiting"; });
     const sort = sortState(shown);
-    const head = DA.el("tr", {}, [DA.el("th", { class: "sticky-col", text: "Person" })].concat(shown.map(function (col) {
+    const groupCells = [DA.el("th", { class: "sticky-col", rowspan: "2", text: "Person" })];
+    GROUPS.forEach(function (g) {
+      const members = shown.filter(function (c) { return groupOf(c) === g[0]; });
+      if (!members.length) { return; }
+      groupCells.push(DA.el("th", {
+        class: "group-label group-start" + (g[0] === "impact" ? " group-impact" : ""),
+        colspan: String(members.length), text: g[1],
+      }));
+    });
+    const groupRow = DA.el("tr", {}, groupCells);
+    const head = DA.el("tr", {}, shown.map(function (col, i) {
       const mark = sort.name === col.name ? (sort.dir === "asc" ? " ▲" : " ▼") : "";
       return DA.el("th", {
-        class: "num sortable", title: col.description, tabindex: "0", text: col.label + mark,
+        class: cellClass(shown, i) + " sortable", title: col.description, tabindex: "0", text: col.label + mark,
         "aria-sort": sort.name === col.name ? (sort.dir === "asc" ? "ascending" : "descending") : null,
         onclick: function () { clickHeader(col); },
         onkeydown: function (event) { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); clickHeader(col); } },
       });
-    })));
+    }));
     const lines = sorted(r.rows, sort).map(function (row) {
       const person = row.person_id
         ? DA.el("a", { href: "/person" + DA.query({ id: row.person_id }), text: row.name })
         : DA.el("span", { text: row.name });
-      const cells = shown.map(function (col) {
+      const cells = shown.map(function (col, i) {
         const cell = row.cells[col.name];
-        if (!cell) { return DA.el("td", { class: "num", text: "–" }); }
+        if (!cell) { return DA.el("td", { class: cellClass(shown, i), text: "–" }); }
         return DA.el("td", {
-          class: "num" + (cell.ranked ? "" : " unranked"),
+          class: cellClass(shown, i) + (cell.ranked ? "" : " unranked"),
           title: cell.sample === null || cell.sample === undefined ? null : "sample " + cell.sample,
           text: DA.fmt(cell.value, col.unit),
         });
@@ -71,7 +91,7 @@
       return DA.el("tr", {}, [DA.el("td", { class: "sticky-col" }, [person])].concat(cells));
     });
     container.appendChild(DA.el("div", { class: "table-scroll" }, [
-      DA.el("table", {}, [DA.el("thead", {}, [head]), DA.el("tbody", {}, lines)]),
+      DA.el("table", {}, [DA.el("thead", {}, [groupRow, head]), DA.el("tbody", {}, lines)]),
     ]));
     if (waiting.length) {
       const text = waiting.map(function (c) { return c.label + " (waiting for " + c.missing.join(", ") + ")"; }).join("; ");

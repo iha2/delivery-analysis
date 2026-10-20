@@ -173,7 +173,9 @@ def test_people_page_has_the_expected_ids_and_scripts():
     assert "<h2>People</h2>" in html
     assert 'id="include-inactive"' in html and 'id="people-matrix"' in html
     assert "/static/pages/people.js" in html and "chart.umd.js" not in html
-    assert "Click a column to sort; click a name for detail." in html
+    assert ("Impact is story points of completed tickets, split between the people whose code delivered them "
+            "(Delivery) and whose reviews helped (Participation). Click a column to sort; click a name for the "
+            "work behind the numbers.") in html
 
 
 def test_every_nav_has_the_people_link_right_after_rankings():
@@ -187,7 +189,7 @@ def test_people_js_reads_only_fields_from_the_contract():
     assert '"/api/people-matrix"' in script and "DA.page(" in script
     allowed = {"window", "columns", "rows", "notes", "person_id", "name", "cells", "label", "unit", "better",
                "description", "needs", "status", "missing", "value", "sample", "ranked", "rank", "confidence",
-               "start", "end", "days", "length", "sort", "dir", "inactive", "id", "team"}
+               "start", "end", "days", "length", "sort", "dir", "inactive", "id", "team", "group"}
     for field in re.findall(r"\b(?:r|data|row|c|col|column|cell)\.([a-z_]+)", script):
         assert field in allowed or field in {"push", "map", "filter", "slice", "sort", "forEach", "find", "join",
                                              "reverse", "checked", "value", "textContent", "appendChild"}, field
@@ -199,3 +201,35 @@ def test_people_js_computes_no_numbers():
     script = read("pages", "people.js")
     for banned in ("reduce(", "sum(", "Math.", "average", "mean(", "+="):
         assert banned not in script, banned
+
+
+def test_people_js_defaults_to_impact_points_descending():
+    script = read("pages", "people.js")
+    assert 'params.get("sort") || "impact_points"' in script
+
+
+def test_people_js_renders_a_grouped_header_with_impact_delivery_participation():
+    script = read("pages", "people.js")
+    for label in ('"Impact"', '"Delivery"', '"Participation"'):
+        assert label in script, label
+    assert "colspan" in script and "group" in script
+    assert "group-start" in script and "group-impact" in script
+    css = read("style.css")
+    assert ".group-impact" in css and ".group-start" in css
+
+
+def test_rankings_defaults_to_impact_points_and_groups_the_picker():
+    script = read("pages", "rankings.js")
+    assert 's.metric || "impact_points"' in script and '"prs_merged"' not in script
+    assert "optgroup" in script and '"Activity (context)"' in script
+    order = [script.index(label) for label in ('"Impact"', '"Delivery"', '"Participation"', '"Activity (context)"')]
+    assert order == sorted(order)
+
+
+def test_person_page_reads_impact_points_before_prs_merged_and_has_the_work_section():
+    script = read("pages", "person.js")
+    assert script.index('"impact_points"') < script.index('"prs_merged"')
+    for name in ("delivery_points", "participation_points", "impact_per_dollar", "delivery_speed", "durability",
+                 "review_responsiveness", "review_follow_through"):
+        assert f'"{name}"' in script, name
+    assert "The work behind the numbers" in read("person.html") + script

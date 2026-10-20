@@ -11,6 +11,8 @@
   --series-2: #eb6834;
   --series-3: #1baf7a;
   --accent-bg: #dbe8f8;
+  --impact-bg: #eef4fc;
+  --border-strong: #b9b7b0;
   --good: #1f7a3a;
   --bad: #b3261e;
   --warn: #8a5a00;
@@ -29,6 +31,8 @@
     --series-2: #d95926;
     --series-3: #199e70;
     --accent-bg: #1f3350;
+    --impact-bg: #182638;
+    --border-strong: #5a5953;
     --good: #6cc488;
     --bad: #f0857d;
     --warn: #e0b45a;
@@ -90,3 +94,8 @@ a { color: var(--series-1); }
 .table-scroll th.sticky-col, .table-scroll td.sticky-col { position: sticky; left: 0; background: var(--surface-1); z-index: 1; }
 th.sortable { cursor: pointer; user-select: none; white-space: nowrap; }
 th.sortable:hover { color: var(--text-primary); }
+
+.section-head { margin: 1.5rem 0 .5rem; font-size: 1.1rem; }
+th.group-label { text-align: center; }
+.group-start { border-left: 2px solid var(--border-strong); }
+.group-impact { background: var(--impact-bg); }

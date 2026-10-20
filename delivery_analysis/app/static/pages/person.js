@@ -1,6 +1,9 @@
 (function () {
   "use strict";
   const DA = window.DA;
+  const TOP = [["impact_points", "Impact"], ["delivery_points", "Delivery"], ["participation_points", "Participation"],
+               ["impact_per_dollar", "Impact per dollar"], ["delivery_speed", "Delivery speed"], ["durability", "Durability"],
+               ["review_responsiveness", "Review responsiveness"], ["review_follow_through", "Review follow-through"]];
   const STATS = [["prs_merged", "PRs merged"], ["reviews_given", "Reviews given"], ["reviews_assigned", "Reviews assigned"],
                  ["review_response_rate", "Response rate"], ["time_to_merge", "Median time to merge"], ["commits", "Commits"],
                  ["story_points_done", "Story points done"], ["issues_done", "Issues done"], ["cycle_time", "Median cycle time"],
@@ -15,11 +18,23 @@
     }))]));
   }
 
+  function tiles(container, pairs, id) {
+    container.textContent = "";
+    pairs.forEach(function (pair) {
+      const tile = DA.el("div", { class: "stat" }, [DA.el("strong", { text: "…" }), DA.el("span", { text: pair[1] })]);
+      container.appendChild(tile);
+      DA.api("/api/metrics/" + pair[0] + DA.query({ include_inactive: "true" })).then(function (r) {
+        const row = (r.rows || []).find(function (x) { return x.person_id === id; });
+        tile.firstChild.textContent = r.status === "ok" && row ? DA.fmt(row.value, r.unit) : "–";
+      }).catch(function () { tile.firstChild.textContent = "–"; });
+    });
+  }
+
   function day(iso) { return iso ? iso.slice(0, 10) : "–"; }
 
   DA.page(function render() {
     const s = DA.state();
-    if (!s.id) { DA.message(document.getElementById("person-stats"), "Open a person from Rankings."); return; }
+    if (!s.id) { DA.message(document.getElementById("person-top"), "Open a person from Rankings."); return; }
     DA.api("/api/people/" + encodeURIComponent(s.id) + DA.query()).then(function (d) {
       document.getElementById("person-name").textContent = d.person.name;
       document.getElementById("person-identities").textContent =
@@ -58,15 +73,7 @@
       DA.notes(tickets, t.notes);
     }).catch(function (e) { DA.message(tickets, e.message, "error"); });
 
-    const stats = document.getElementById("person-stats");
-    stats.textContent = "";
-    STATS.forEach(function (pair) {
-      const tile = DA.el("div", { class: "stat" }, [DA.el("strong", { text: "…" }), DA.el("span", { text: pair[1] })]);
-      stats.appendChild(tile);
-      DA.api("/api/metrics/" + pair[0] + DA.query({ include_inactive: "true" })).then(function (r) {
-        const row = (r.rows || []).find(function (x) { return x.person_id === s.id; });
-        tile.firstChild.textContent = r.status === "ok" && row ? DA.fmt(row.value, r.unit) : "–";
-      }).catch(function () { tile.firstChild.textContent = "–"; });
-    });
+    tiles(document.getElementById("person-top"), TOP, s.id);
+    tiles(document.getElementById("person-stats"), STATS, s.id);
   });
 })();

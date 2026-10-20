@@ -2,12 +2,21 @@
   "use strict";
   const DA = window.DA;
   let catalog = null;
+  const GROUPS = [["impact", "Impact"], ["delivery", "Delivery"], ["participation", "Participation"],
+                  ["activity", "Activity (context)"]];
 
   function fillPicker(picker, chosen) {
     picker.textContent = "";
-    catalog.filter(function (m) { return m.kind === "per_person"; }).forEach(function (m) {
-      const label = m.label + (m.status === "waiting" ? " (waiting for " + m.missing.join(", ") + ")" : "");
-      picker.appendChild(DA.el("option", { value: m.name, text: label, selected: m.name === chosen }));
+    const perPerson = catalog.filter(function (m) { return m.kind === "per_person"; });
+    GROUPS.forEach(function (g) {
+      const members = perPerson.filter(function (m) { return (m.group || "activity") === g[0]; });
+      if (!members.length) { return; }
+      const optgroup = DA.el("optgroup", { label: g[1] });
+      members.forEach(function (m) {
+        const label = m.label + (m.status === "waiting" ? " (waiting for " + m.missing.join(", ") + ")" : "");
+        optgroup.appendChild(DA.el("option", { value: m.name, text: label, selected: m.name === chosen }));
+      });
+      picker.appendChild(optgroup);
     });
   }
 
@@ -50,7 +59,7 @@
     const inactive = document.getElementById("include-inactive");
     const container = document.getElementById("ranking");
     const s = DA.state();
-    const chosen = s.metric || "prs_merged";
+    const chosen = s.metric || "impact_points";
     inactive.checked = s.inactive === "1";
     const ready = catalog ? Promise.resolve() : DA.api("/api/metrics").then(function (d) { catalog = d.metrics; });
     ready.then(function () {
