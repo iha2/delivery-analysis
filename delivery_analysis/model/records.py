@@ -22,6 +22,12 @@ TABLE_KEYS: Dict[str, Tuple[str, ...]] = {
     "ticket_credit": ("work_item_source", "work_item_id", "person_id"),
     "claude_usage_day": ("source", "day", "actor_type", "actor", "model"),
     "claude_activity_day": ("source", "day", "actor_type", "actor"),
+    "review_comment": ("source", "source_id"),
+    "commit_file": ("repository_id", "sha", "path"),
+    "code_file": ("repository_id", "path"),
+    "pr_value": ("pr_id",),
+    "comment_fix": ("comment_id",),
+    "impact_share": ("issue_id", "actor_key"),
 }
 
 
