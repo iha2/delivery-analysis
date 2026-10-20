@@ -12,6 +12,8 @@ from pathlib import Path
 from typing import Any, Dict, Iterator, List, NamedTuple, Optional, Set, Tuple
 
 from delivery_analysis.code import languages
+from delivery_analysis.code.clone import CodeError
+from delivery_analysis.settings import redact
 
 MAX_FILE_BYTES = 1_000_000
 ROOT_NAMES = {"main.py", "__main__.py", "manage.py", "app.py", "wsgi.py", "asgi.py", "program.cs", "startup.cs"}
@@ -395,9 +397,17 @@ def build_graph(files: Dict[str, bytes]) -> Dict[str, FileNode]:
 # ---------------------------------------------------------------- snapshot
 
 def _git(repo_path: Path, *args: str, data: Optional[bytes] = None) -> bytes:
-    result = subprocess.run(
-        ["git", "-C", str(repo_path), *args], input=data, capture_output=True, check=True
-    )
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(repo_path), *args], input=data, capture_output=True
+        )
+    except FileNotFoundError:
+        raise CodeError("git is not installed or not on PATH")
+    except OSError as exc:
+        raise CodeError(redact("could not run git: %s" % exc, []))
+    if result.returncode != 0:
+        detail = (result.stderr or b"").decode("utf-8", "replace").strip()
+        raise CodeError(redact("git %s failed: %s" % (args[0] if args else "git", detail), []))
     return result.stdout
 
 
@@ -424,10 +434,11 @@ def _read_blobs(repo_path: Path, shas: List[str]) -> Dict[str, bytes]:
 
 def snapshot(conn: sqlite3.Connection, repository_id: str, repo_path: Path, now: str) -> int:
     """Weigh the files at HEAD and replace the repository's `code_file` rows; return the row count."""
+    _git(repo_path, "rev-parse", "--git-dir")
     try:
         head = _git(repo_path, "rev-parse", "--verify", "HEAD").decode().strip()
-    except subprocess.CalledProcessError:
-        return 0
+    except CodeError:
+        return 0  # a repository with no commits yet
     entries: Dict[str, str] = {}
     for item in _git(repo_path, "ls-files", "-s", "-z").split(b"\0"):
         if not item:

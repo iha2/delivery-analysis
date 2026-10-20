@@ -119,3 +119,21 @@ def test_failed_clone_does_not_block_retry(tmp_path):
         ensure_clone(_url(tmp_path / "does-not-exist"), dest, TOKEN)
     origin = make_repo(tmp_path, [{"files": {"a.py": "x\n"}}])
     assert ensure_clone(_url(origin), dest, TOKEN).fetched is False
+
+
+def test_second_ensure_clone_moves_checkout_to_remote_default_branch(tmp_path):
+    from delivery_analysis.code import graph
+
+    origin = make_repo(tmp_path, [{"files": {"a.py": "x = 1\n"}}])
+    dest = tmp_path / "work" / "clone"
+    ensure_clone(_url(origin), dest, TOKEN)
+    (origin / "new.py").write_text("y = 2\n")
+    git(origin, "add", "-A")
+    git(origin, "commit", "-q", "-m", "more")
+    second = ensure_clone(_url(origin), dest, TOKEN)
+    assert second.fetched is True
+    assert second.head_sha == shas(origin)[-1]
+    assert git(dest, "rev-parse", "HEAD") == shas(origin)[-1]
+    assert (dest / "new.py").exists()
+    tracked = git(dest, "ls-files").splitlines()
+    assert "new.py" in tracked

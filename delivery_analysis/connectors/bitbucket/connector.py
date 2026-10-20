@@ -258,7 +258,7 @@ class BitbucketConnector:
                 continue  # retried on the next sync
             records = normalize.review_comment_records(source_id, comments)
             records.append(normalize.prop("change_request", source_id, "comments_detail_on", detailed))
-            yield Batch(records)
+            yield Batch(records, replace=[("review_comment", {"change_request_id": source_id})])
 
     def _all_items(self, path: str, params: Dict[str, Any]) -> List[Dict[str, Any]]:
         items: List[Dict[str, Any]] = []
@@ -318,7 +318,7 @@ class BitbucketConnector:
             records.append(normalize.prop("change_request", source_id, "comments_detail_on", updated))
             raw = RawPayload(SOURCE, source_id, "pr_activity", json.dumps(activity, sort_keys=True))
             succeeded += 1
-            yield Batch(records, [raw])
+            yield Batch(records, [raw], replace=[("review_comment", {"change_request_id": source_id})])
         yield from self._backfill_comments(uuid, repo_path)
         if last_error is not None and succeeded == 0:
             raise last_error  # every pull request failed the same way: that is a real problem, not a skip

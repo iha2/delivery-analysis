@@ -96,3 +96,22 @@ def test_a_failing_repo_is_redacted_and_the_others_continue(tmp_path, conn, caps
     assert "aaa/bad: code build failed" in out and "***" in out
     assert "ws/slug: 2 files weighed" in out
     assert Path(tmp_path / "code").is_dir()
+
+
+def test_a_broken_clone_is_reported_and_the_others_still_build(tmp_path, conn, capsys):
+    from delivery_analysis.code.build import build_code
+
+    origin = _origin(tmp_path)
+    _seed(conn, origin)
+    repo_selection.add_repo(conn, "bitbucket", OTHER, "aaa", "bad", NOW)
+    conn.commit()
+    settings = Settings(db_path=tmp_path / "teams.sqlite")
+    (tmp_path / "code" / OTHER.strip("{}") / ".git").mkdir(parents=True)  # corrupt clone
+    good = _run(tmp_path, ["code", "build"], {"BITBUCKET": TOKEN}, lambda ws, slug: str(origin))
+    assert good == 1
+    out = capsys.readouterr().out
+    assert "Traceback" not in out
+    assert "aaa/bad: code build failed" in out
+    assert "ws/slug: 2 files weighed" in out
+    result = build_code(conn, settings, {"BITBUCKET": TOKEN}, fetch=False)
+    assert result.failed == 1 and result.built == 1

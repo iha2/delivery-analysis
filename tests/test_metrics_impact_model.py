@@ -141,3 +141,15 @@ def test_prs_reviewed_counts_distinct_prs_and_review_value_weighs_approvals(conn
     assert value["Bob Builder"]["value"] == 4.0  # PR 20: 2.5 (August comment left out), seed PR 1: 1.5
     assert value["Ann Example"]["value"] == 1.5
     assert "Cy Inactive" not in reviewed
+
+
+def test_a_second_linked_account_of_the_author_earns_no_review_credit(conn):
+    seed_model(conn)
+    conn.execute("INSERT INTO identity (source, account_id, person_id, manual) VALUES ('bitbucket', 'acc-ann2', 'p-ann', 0)")
+    p20 = "{11111111-1111-1111-1111-111111111111}#20"
+    event(conn, p20, "comment", "acc-ann2", "2026-09-08T19:00:00Z")
+    event(conn, p20, "approved", "acc-ann2", "2026-09-09T11:00:00Z")
+    reviewed = by_person(run_metric(conn, BY_NAME["prs_reviewed"], Scope(), WINDOW))
+    value = by_person(run_metric(conn, BY_NAME["review_value"], Scope(), WINDOW))
+    assert "Ann Example" not in reviewed or reviewed["Ann Example"]["value"] == 0.0
+    assert "Ann Example" not in value or value["Ann Example"]["value"] == 0.0

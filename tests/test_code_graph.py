@@ -286,3 +286,23 @@ def test_snapshot_writes_and_replaces_rows(conn, tmp_path):
     assert conn.execute("SELECT COUNT(*) FROM code_file WHERE repository_id='R2'").fetchone()[0] == 1
     assert graph.snapshot(conn, "R1", repo, "2026-10-20T00:00:00Z") == 4
     assert conn.execute("SELECT COUNT(*) FROM code_file WHERE repository_id='R1'").fetchone()[0] == 4
+
+
+def test_snapshot_git_failure_is_a_code_error(conn, tmp_path):
+    from delivery_analysis.code.clone import CodeError
+
+    not_repo = tmp_path / "plain"
+    not_repo.mkdir()
+    with pytest.raises(CodeError):
+        graph.snapshot(conn, "R1", not_repo, "2026-10-19T00:00:00Z")
+
+
+def test_snapshot_missing_git_is_a_code_error(conn, tmp_path, monkeypatch):
+    from delivery_analysis.code.clone import CodeError
+
+    def boom(*a, **k):
+        raise FileNotFoundError("git")
+
+    monkeypatch.setattr(graph.subprocess, "run", boom)
+    with pytest.raises(CodeError):
+        graph.snapshot(conn, "R1", tmp_path, "2026-10-19T00:00:00Z")

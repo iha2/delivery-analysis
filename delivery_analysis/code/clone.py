@@ -72,6 +72,37 @@ def _git(
     return proc
 
 
+def _remote_default_ref(dest: Path, env: Dict[str, str], token: str, run: Callable[..., Any]) -> Optional[str]:
+    """The remote default branch as a ref, from origin/HEAD (refreshed when possible), else origin/main or origin/master."""
+    base = ["git", "-C", str(dest)]
+    try:
+        _git(base + ["remote", "set-head", "origin", "--auto"], env, token, run)
+    except CodeError:
+        pass
+    try:
+        out = _git(base + ["symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"], env, token, run)
+        ref = (out.stdout or "").strip()
+        if ref:
+            return ref
+    except CodeError:
+        pass
+    for name in ("main", "master"):
+        ref = "refs/remotes/origin/" + name
+        try:
+            _git(base + ["rev-parse", "--verify", "--quiet", ref + "^{commit}"], env, token, run)
+            return ref
+        except CodeError:
+            continue
+    return None
+
+
+def _checkout_remote_default(dest: Path, env: Dict[str, str], token: str, run: Callable[..., Any]) -> None:
+    """Move our own clone's HEAD, index and files to the remote default branch."""
+    ref = _remote_default_ref(dest, env, token, run)
+    if ref:
+        _git(["git", "-C", str(dest), "reset", "--hard", "--quiet", ref], env, token, run)
+
+
 def ensure_clone(
     url: str, dest: Path, token: str, *, run: Callable[..., Any] = subprocess.run
 ) -> CloneResult:
@@ -87,5 +118,6 @@ def ensure_clone(
         except CodeError:
             shutil.rmtree(dest, ignore_errors=True)
             raise
+    _checkout_remote_default(dest, env, token, run)
     head = _git(["git", "-C", str(dest), "rev-parse", "HEAD"], env, token, run)
     return CloneResult(path=dest, head_sha=(head.stdout or "").strip(), fetched=fetched)

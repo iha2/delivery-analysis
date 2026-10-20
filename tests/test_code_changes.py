@@ -142,3 +142,22 @@ def test_rename_uses_new_path(tmp_path):
     read_commit_files(conn, REPO, origin, NOW)
     paths = [r["path"] for r in conn.execute("SELECT path FROM commit_file")]
     assert paths == ["pkg/new.py"]
+
+
+def test_read_commit_files_fills_missing_committed_at(tmp_path):
+    origin = make_repo(tmp_path, [{"files": {"a.py": "a\n"}}, {"files": {"b.py": "b\n"}}])
+    s = shas(origin)
+    conn = _conn()
+    _add_commit(conn, s[0])
+    _add_commit(conn, s[1])
+    conn.execute(
+        "UPDATE vcs_commit SET committed_at = '2020-01-01T00:00:00Z' WHERE sha = ?", (s[1],)
+    )
+    read_commit_files(conn, REPO, origin, NOW)
+    got = {r["sha"]: r["committed_at"] for r in conn.execute("SELECT sha, committed_at FROM vcs_commit")}
+    expected = git(origin, "show", "-s", "--format=%cI", s[0])
+    from delivery_analysis.core.time_utils import to_utc_iso
+
+    assert got[s[0]] == to_utc_iso(expected)
+    assert got[s[0]].endswith("Z")
+    assert got[s[1]] == "2020-01-01T00:00:00Z"

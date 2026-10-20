@@ -87,11 +87,12 @@ def test_person_without_shares_gets_zeros_not_an_error(seeded):
         assert out["series"]["impact_per_dollar"] == [None, None, None]
 
 
-def test_team_median_is_over_members_with_a_value(seeded):
+def test_team_median_counts_every_member_for_sum_metrics_and_members_with_a_value_for_ratios(seeded):
     scope = team_scope(seeded, "t1")
     out = person_series(seeded, "p-ann", scope, end=END, window_days=30, step_days=30, history_days=0, tz=TZ)
     result = run_metric(seeded, BY_NAME["impact_points"], scope, make_window("30d", TZ, END), People(seeded))
-    want = statistics.median(r["value"] for r in result["rows"] if r["value"] is not None)
+    got = {r["person_id"]: r["value"] for r in result["rows"] if r["person_id"] is not None}
+    want = statistics.median(got.get(member, 0.0) for member in scope.members)
     assert out["team_median"]["impact"] == [pytest.approx(want)]
     assert out["team_median"]["impact_per_dollar"] == [None]
     assert out["team_median"]["delivery_speed"][0] is not None
@@ -114,3 +115,19 @@ def test_26_windows_are_fast(seeded):
     elapsed = time.perf_counter() - started
     print(f"series: {len(out['dates'])} windows in {elapsed:.3f}s")
     assert len(out["dates"]) == 26 and elapsed < 3.0
+
+
+def test_without_a_team_sum_metric_median_counts_people_without_a_row_as_zero(seeded):
+    people = People(seeded)
+    out = person_series(seeded, "p-ann", Scope(), end=END, window_days=30, step_days=30, history_days=0, tz=TZ)
+    everyone = [row["person_id"] for row in people.all()]
+    for key in ("impact", "delivery", "participation", "prs_reviewed", "review_value", "penalty"):
+        if key == "penalty":
+            continue
+        result = run_metric(seeded, BY_NAME[METRIC_OF[key]], Scope(), make_window("30d", TZ, END), people)
+        got = {r["person_id"]: r["value"] for r in result["rows"] if r["person_id"] is not None}
+        want = statistics.median(got.get(person, 0.0) or 0.0 for person in everyone)
+        assert out["team_median"][key] == [pytest.approx(round(want, 4))], key
+    ratio = [r["value"] for r in run_metric(seeded, BY_NAME["delivery_speed"], Scope(), make_window("30d", TZ, END), people)["rows"]
+             if r["value"] is not None]
+    assert out["team_median"]["delivery_speed"] == [pytest.approx(statistics.median(ratio))]

@@ -193,3 +193,34 @@ def test_detail_resumes_across_runs_and_collects_comments_for_every_pr(tmp_path)
     assert repo_selection.detail_progress(conn, UUID_A) == (3, 3)
     assert len(rows(conn, "SELECT 1 FROM property WHERE name = 'comments_detail_on'")) == 3
     assert len(rows(conn, "SELECT 1 FROM review_comment")) == 4
+
+
+# --- deleted comments ------------------------------------------------------------------------
+
+def test_backfill_replaces_comment_rows_so_deleted_comments_disappear(tmp_path):
+    fake = FakeBitbucket()
+    standard(fake)
+    conn, path = build(tmp_path, fake)
+    run_sync(conn, [connector_for(path, fake)])
+    conn.execute("DELETE FROM property WHERE name = 'comments_detail_on'")  # keep rows; re-read comments
+    conn.commit()
+    comments = fake.repos["movedocs_v1.0"]["comments"]
+    comments[3] = [c for c in comments[3] if c["id"] != 34]  # comment 34 was deleted on Bitbucket
+    run_sync(conn, [connector_for(path, fake)])
+    ids = [r["source_id"].rsplit(":", 1)[1] for r in rows(
+        conn, "SELECT source_id FROM review_comment WHERE change_request_id = ? ORDER BY source_id", PR)]
+    assert ids == ["31", "33"]
+
+
+def test_detail_replaces_stale_comment_rows_of_that_pr_only(tmp_path):
+    fake = FakeBitbucket()
+    standard(fake)
+    conn, path = build(tmp_path, fake)
+    for pr_id in (PR, f"{UUID_A}#2"):
+        conn.execute(
+            "INSERT INTO review_comment (source, source_id, change_request_id, actor_account, created_at, fetched_at) "
+            "VALUES ('bitbucket', ?, ?, 'acc-bob', ?, ?)", (f"{pr_id}:comment:999", pr_id, recent(1), NOW))
+    conn.commit()
+    run_sync(conn, [connector_for(path, fake)])
+    assert rows(conn, "SELECT 1 FROM review_comment WHERE source_id LIKE '%:comment:999'") == []
+    assert len(rows(conn, "SELECT 1 FROM review_comment")) == 4

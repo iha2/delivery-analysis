@@ -57,6 +57,7 @@ def person_series(
     medians: Dict[str, List[Optional[float]]] = {key: [] for key in KEYS}
     notes: List[str] = []
     impact_ok = False
+    members = list(scope.members) if scope.members is not None else [row["person_id"] for row in people.all()]
     metrics = {key: replace(BY_NAME[name], windowed=False) for key, name in METRIC_OF.items()}
     for window in windows:
         for key, metric in metrics.items():
@@ -70,10 +71,13 @@ def person_series(
             if ok and mine is None and metric.aggregate == "sum":
                 mine = 0.0
             series[key].append(mine)
-            medians[key].append(_median([row["value"] for row in rows if row["value"] is not None]))
+            if ok and metric.aggregate == "sum":  # everyone in scope counts, with 0 when they have no value
+                have = {row["person_id"]: row["value"] for row in rows}
+                medians[key].append(_median([have.get(member) or 0.0 for member in members]))
+            else:
+                medians[key].append(_median([row["value"] for row in rows if row["value"] is not None]))
     first, last = windows[0].start, windows[-1].end
     shares = _penalties(conn, people, first, last) if impact_ok else []
-    members = list(scope.members) if scope.members is not None else [row["person_id"] for row in people.all()]
     for window in windows:
         totals = {member: 0.0 for member in members}
         for person, resolved, penalty in shares:

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import sqlite3
 from collections import defaultdict
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 from delivery_analysis.metrics import bitbucket as bb
 from delivery_analysis.metrics import tokens as tk
@@ -156,17 +156,30 @@ def review_responsiveness(conn, scope: Scope, window: Window) -> Observations:
     return obs
 
 
-def _reviews(conn: sqlite3.Connection, scope: Scope, window: Window):
+def _reviews(conn: sqlite3.Connection, scope: Scope, window: Window) -> List[sqlite3.Row]:
+    """Comments and approvals in the window on pull requests owned by someone else. The owner is compared by
+    person, so a second linked account of the author earns no review credit on their own pull request."""
     where, params = scope.repo_filter("c.repository_id")
-    return conn.execute(
-        "SELECT e.actor_account AS account, e.change_request_id AS pr_id, e.type AS type "
+    people = People(conn)
+    rows = conn.execute(
+        "SELECT e.actor_account AS account, e.change_request_id AS pr_id, e.type AS type, "
+        "c.author_account AS author "
         "FROM change_event e JOIN change_request c ON c.source = e.source AND c.source_id = e.change_request_id "
         "WHERE e.source = 'bitbucket' AND e.type IN ('comment', 'approved') AND e.actor_account IS NOT NULL "
         "AND e.actor_account != '' AND e.occurred_at >= ? AND e.occurred_at < ? "
-        "AND (c.author_account IS NULL OR e.actor_account != c.author_account) "
         f"AND {where} ORDER BY e.occurred_at, e.source_id",
         [window.start, window.end] + params,
     ).fetchall()
+    return [row for row in rows if not _own_pr(people, row["account"], row["author"])]
+
+
+def _own_pr(people: People, account: str, author: Optional[str]) -> bool:
+    if not author:
+        return False
+    if account == author:
+        return True
+    reviewer = people.resolve(actor_for(account))
+    return reviewer is not None and reviewer == people.resolve(actor_for(author))
 
 
 def prs_reviewed(conn, scope: Scope, window: Window) -> Observations:

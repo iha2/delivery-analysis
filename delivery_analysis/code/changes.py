@@ -11,6 +11,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 import sqlite3
 
 from delivery_analysis.code.clone import CodeError
+from delivery_analysis.core.time_utils import to_utc_iso
 
 _HUNK = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
 
@@ -113,11 +114,22 @@ def read_commit_files(
     ]
     read = missing = merges = 0
     for sha in shas:
-        parents = _git(repo_path, ["show", "-s", "--format=%P", sha], run)
+        parents = _git(repo_path, ["show", "-s", "--format=%P%x00%cI", sha], run)
         if parents.returncode != 0:
             missing += 1
             continue
-        if len((parents.stdout or "").split()) > 1:
+        parent_text, _, committed = (parents.stdout or "").partition("\0")
+        try:
+            committed_at = to_utc_iso(committed.strip())
+        except ValueError:
+            committed_at = None
+        if committed_at:
+            conn.execute(
+                "UPDATE vcs_commit SET committed_at = ? "
+                "WHERE repository_id = ? AND sha = ? AND committed_at IS NULL",
+                (committed_at, repository_id, sha),
+            )
+        if len(parent_text.split()) > 1:
             merges += 1
             continue
         stat = _git(repo_path, ["show", "--format=", "--numstat", "-z", "-M", sha], run)
