@@ -170,3 +170,38 @@ def test_people_matrix_endpoint(tmp_path):
     assert "p-cy" not in [r["person_id"] for r in body["rows"]]
     assert client.get("/api/people-matrix", params={"team": "nope"}).status_code == 404
     assert client.get("/api/people-matrix", params={"window": "weekly"}).status_code == 400
+
+
+def test_person_series_returns_the_rolling_series(tmp_path):
+    client, *_ = make(tmp_path)
+    body = client.get("/api/person/p-ann/series",
+                      params={"team": "t1", "window_days": 30, "step_days": 30, "history_days": 60}).json()
+    assert body["dates"] == ["2026-08-16", "2026-09-15", "2026-10-15"]
+    assert set(body["series"]) == set(body["team_median"]) == {
+        "impact", "delivery", "participation", "penalty", "impact_per_dollar", "prs_reviewed", "review_value",
+        "delivery_speed", "durability",
+    }
+    assert all(len(values) == 3 for values in body["series"].values())
+    assert body["series"]["prs_reviewed"][0] == 0
+
+
+def test_person_series_defaults_and_no_team(tmp_path):
+    client, *_ = make(tmp_path)
+    body = client.get("/api/person/p-ann/series").json()
+    assert len(body["dates"]) == 26 and body["dates"][-1] == "2026-10-15" and body["window_days"] == 30
+
+
+@pytest.mark.parametrize("path, params, status", [
+    ("/api/person/nope/series", {}, 404),
+    ("/api/person/p-ann/series", {"team": "nope"}, 404),
+    ("/api/person/p-ann/series", {"window_days": 6}, 400),
+    ("/api/person/p-ann/series", {"window_days": 366}, 400),
+    ("/api/person/p-ann/series", {"step_days": 0}, 400),
+    ("/api/person/p-ann/series", {"window_days": 30, "step_days": 31}, 400),
+    ("/api/person/p-ann/series", {"history_days": 731}, 400),
+    ("/api/person/p-ann/series", {"history_days": -1}, 400),
+    ("/api/person/p-ann/series", {"history_days": 730}, 200),
+])
+def test_person_series_validates_its_parameters(tmp_path, path, params, status):
+    client, *_ = make(tmp_path)
+    assert client.get(path, params=params).status_code == status

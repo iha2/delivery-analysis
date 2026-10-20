@@ -20,6 +20,7 @@ from delivery_analysis.metrics.people import (
 )
 from delivery_analysis.metrics.person import person_detail
 from delivery_analysis.metrics.registry import describe, run_metric
+from delivery_analysis.metrics.series import person_series
 from delivery_analysis.metrics.tickets import ticket_costs
 from delivery_analysis.metrics.window import ISO_Z, Window, make_window
 from delivery_analysis.settings import CONFIG_VARS, CREDENTIAL_VARS, credential_status
@@ -282,6 +283,32 @@ def build_router(ctx: AppContext) -> APIRouter:
                 raise _fail(ctx, 404, exc)
             except ValueError as exc:
                 raise _fail(ctx, 400, exc)
+
+    @router.get("/person/{person_id}/series")
+    def series(
+        person_id: str,
+        team: Optional[str] = None,
+        window_days: int = 30,
+        step_days: int = 7,
+        history_days: int = 180,
+    ) -> Dict[str, Any]:
+        if not 7 <= window_days <= 365:
+            raise HTTPException(status_code=400, detail="window_days must be between 7 and 365.")
+        if not 1 <= step_days <= window_days:
+            raise HTTPException(status_code=400, detail="step_days must be between 1 and window_days.")
+        if not 0 <= history_days <= 730:
+            raise HTTPException(status_code=400, detail="history_days must be between 0 and 730.")
+        with _db(ctx) as conn:
+            try:
+                scope = team_scope(conn, team)
+                if conn.execute("SELECT 1 FROM person WHERE person_id = ?", (person_id,)).fetchone() is None:
+                    raise LookupError(f"No person with id {person_id!r}.")
+                return person_series(
+                    conn, person_id, scope, end=ctx.today(), window_days=window_days, step_days=step_days,
+                    history_days=history_days, tz=ctx.settings.report_tz,
+                )
+            except LookupError as exc:
+                raise _fail(ctx, 404, exc)
 
     @router.get("/tickets")
     def tickets(

@@ -27,6 +27,7 @@ from delivery_analysis.settings import (
 )
 from delivery_analysis.store.db import connect, migrate
 from delivery_analysis.store.repo_selection import detail_progress
+from delivery_analysis.cli import code as code_cli
 from delivery_analysis.cli import projects as projects_cli
 from delivery_analysis.cli import repos as repos_cli
 from delivery_analysis.cli import teams as teams_cli
@@ -53,7 +54,8 @@ def build_parser() -> argparse.ArgumentParser:
             "  doctor    Show which credential variables are present (names only)\n"
             "  teams     Discover, save, import and export team rosters\n"
             "  repos     Choose which repositories are synced\n"
-            "  projects  Choose which Jira projects are synced\n\n"
+            "  projects  Choose which Jira projects are synced\n"
+            "  code      Clone repositories and build code-weighted impact\n\n"
             "GitHub report commands (need GitHub CLI `gh` authenticated with read access):\n"
             "  analyze   Fetch data from GitHub and write TSV reports\n"
             "  export    Convert TSV reports to Excel\n"
@@ -80,6 +82,7 @@ def build_parser() -> argparse.ArgumentParser:
     repos_cli.register(commands)
     projects_cli.register(commands)
     tokens_cli.register(commands)
+    code_cli.register(commands)
     return parser
 
 
@@ -198,6 +201,8 @@ def main(
         return projects_cli.run(args, settings, env, transport=transport)
     if args.command == "tokens":
         return tokens_cli.run(args, settings)
+    if args.command == "code":
+        return code_cli.run(args, settings, env)
     if args.command == "serve":
         return _serve(args, settings, env)
     if args.command == "sync":

@@ -99,3 +99,10 @@ th.sortable:hover { color: var(--text-primary); }
 th.group-label { text-align: center; }
 .group-start { border-left: 2px solid var(--border-strong); }
 .group-impact { background: var(--impact-bg); }
+
+/* Person page charts */
+.chart-row { display: grid; gap: 1rem; margin-bottom: 1rem; }
+.chart-row.one { grid-template-columns: 1fr; }
+.chart-row.two { grid-template-columns: repeat(auto-fit, minmax(22rem, 1fr)); }
+.chart-row.three { grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr)); }
+.raw-details { margin-top: 1.5rem; }

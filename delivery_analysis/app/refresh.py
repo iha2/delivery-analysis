@@ -85,13 +85,19 @@ def sync_runner(
                 for state in list_sync_states(conn):
                     if state["connector"] in names:
                         clear_state(conn, state["connector"], state["scope"])
-            results, _, failed_teams = sync_and_reconcile(conn, connectors, settings, environ, only=source)
+            results, lines, failed_teams = sync_and_reconcile(
+                conn, connectors, settings, environ, only=source,
+                fetch_code=bool((environ.get("BITBUCKET") or "").strip()),
+            )
         finally:
             conn.close()
         failed = sum(1 for result in results if result.status == "failed")
         text = f"{len(results) - failed} ok, {failed} failed"
         if failed_teams:
             text += f", {failed_teams} team update failed"
+        for line in lines:
+            if "build failed" in line:
+                text += "; " + line
         return redact(text, secrets)
 
     return run

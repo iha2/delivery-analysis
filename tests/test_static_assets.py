@@ -6,7 +6,7 @@ import pytest
 STATIC = Path(__file__).resolve().parents[1] / "delivery_analysis" / "app" / "static"
 PAGE_FILES = sorted(p for p in STATIC.glob("*.html") if p.name != "index.html")
 NAV_LABELS = ["Dashboard", "Rankings", "People", "Selection", "Teams", "Sources", "Settings", "Ask"]
-API_ROOTS = {"teams", "metrics", "people", "repos", "sources", "refresh", "settings", "identities", "health", "tickets"}
+API_ROOTS = {"teams", "metrics", "people", "repos", "sources", "refresh", "settings", "identities", "health", "tickets", "person"}
 OWN_FILES = [p for p in STATIC.rglob("*") if p.suffix in (".html", ".js", ".css") and "vendor" not in p.parts]
 
 
@@ -226,10 +226,29 @@ def test_rankings_defaults_to_impact_points_and_groups_the_picker():
     assert order == sorted(order)
 
 
-def test_person_page_reads_impact_points_before_prs_merged_and_has_the_work_section():
-    script = read("pages", "person.js")
-    assert script.index('"impact_points"') < script.index('"prs_merged"')
-    for name in ("delivery_points", "participation_points", "impact_per_dollar", "delivery_speed", "durability",
-                 "review_responsiveness", "review_follow_through"):
-        assert f'"{name}"' in script, name
-    assert "The work behind the numbers" in read("person.html") + script
+def test_person_page_keeps_the_work_section_for_the_raw_lists():
+    assert "The work behind the numbers" in read("person.html")
+
+
+PERSON_CHARTS = ["impact", "impact_per_dollar", "split", "delivery", "delivery_speed", "durability",
+                 "participation", "prs_reviewed", "review_value"]
+
+
+def test_person_page_uses_the_series_endpoint_and_has_a_canvas_per_chart():
+    html, script = read("person.html"), read("pages", "person.js")
+    assert '"/api/person/"' in script and "/series?" in script
+    for key in PERSON_CHARTS:
+        assert f'<canvas id="chart-{key}"' in html and f'id="empty-{key}"' in html
+    assert 'id="person-window"' in html and "window_days" in script
+    assert 'id="person-top"' not in html
+    assert "<summary>Show the tickets and PRs</summary>" in html
+    assert "Waiting for Claude usage data" in script and "No data yet" in script
+    assert "borderDash" in script  # the team median is dashed
+    assert "fan-in" not in html.lower()
+
+
+def test_person_page_has_a_title_and_one_caption_per_chart():
+    html = read("person.html")
+    cards = re.findall(r'<section class="card">\s*<h3>([^<]+)</h3>\s*<p class="subtitle">([^<]+)</p>\s*<div class="chart', html)
+    assert len(cards) == len(PERSON_CHARTS)
+    assert all(title.strip() and caption.strip().endswith(".") for title, caption in cards)

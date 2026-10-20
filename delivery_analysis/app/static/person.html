@@ -23,17 +23,91 @@
     <main id="content">
       <h2 id="person-name">Person</h2>
       <p id="person-identities" class="note"></p>
-      <div id="person-top" class="stats"></div>
-      <h3 class="section-head">The work behind the numbers</h3>
-      <div id="person-stats" class="stats"></div>
-      <div class="cards">
-        <section class="card"><h3>Commits by week</h3><div id="person-commits"></div></section>
-        <section class="card"><h3>Reviews waiting on them</h3><div id="person-pending"></div></section>
+      <div class="form-row">
+        <label for="person-window">Rolling window</label>
+        <select id="person-window" aria-label="Rolling window">
+          <option value="30">30 days</option>
+          <option value="60">60 days</option>
+          <option value="90">90 days</option>
+        </select>
+        <span class="note">Each point covers the days up to its date; the dashed line is the team median.</span>
       </div>
-      <section class="card hidden" id="person-issues-card"><h3>Completed issues</h3><div id="person-issues"></div></section>
-      <section class="card"><h3>Tickets and Claude cost</h3><div id="person-tickets"></div></section>
-      <section class="card"><h3>Pull requests</h3><div id="person-prs"></div></section>
-      <section class="card"><h3>Reviews given</h3><div id="person-reviews"></div></section>
+      <div class="chart-row one">
+        <section class="card">
+          <h3>Impact</h3>
+          <p class="subtitle">Story points of finished tickets, weighted by how central the changed files are; delivery plus reviewing.</p>
+          <div class="chart"><canvas id="chart-impact" role="img" aria-label="Impact"></canvas></div>
+          <p class="note hidden" id="empty-impact"></p>
+        </section>
+      </div>
+      <div class="chart-row two">
+        <section class="card">
+          <h3>Impact per dollar</h3>
+          <p class="subtitle">Impact points for each dollar of Claude usage.</p>
+          <div class="chart"><canvas id="chart-impact_per_dollar" role="img" aria-label="Impact per dollar"></canvas></div>
+          <p class="note hidden" id="empty-impact_per_dollar"></p>
+        </section>
+        <section class="card">
+          <h3>Delivery and participation</h3>
+          <p class="subtitle">How the latest window splits between doing the work and helping others get it right, against the team median.</p>
+          <div class="chart"><canvas id="chart-split" role="img" aria-label="Delivery and participation"></canvas></div>
+          <p class="note hidden" id="empty-split"></p>
+        </section>
+      </div>
+      <div class="chart-row three">
+        <section class="card">
+          <h3>Delivery points</h3>
+          <p class="subtitle">Points earned as the owner of the pull request, less a small deduction for each review comment that had to be fixed.</p>
+          <div class="chart"><canvas id="chart-delivery" role="img" aria-label="Delivery points"></canvas></div>
+          <p class="note hidden" id="empty-delivery"></p>
+        </section>
+        <section class="card">
+          <h3>Delivery speed</h3>
+          <p class="subtitle">Hours from a ticket starting to its first pull request merging. Lower is better.</p>
+          <div class="chart"><canvas id="chart-delivery_speed" role="img" aria-label="Delivery speed"></canvas></div>
+          <p class="note hidden" id="empty-delivery_speed"></p>
+        </section>
+        <section class="card">
+          <h3>Durability</h3>
+          <p class="subtitle">Share of delivered points on tickets that were never reopened.</p>
+          <div class="chart"><canvas id="chart-durability" role="img" aria-label="Durability"></canvas></div>
+          <p class="note hidden" id="empty-durability"></p>
+        </section>
+      </div>
+      <div class="chart-row three">
+        <section class="card">
+          <h3>Participation points</h3>
+          <p class="subtitle">Points earned when a review comment led to a change in the code.</p>
+          <div class="chart"><canvas id="chart-participation" role="img" aria-label="Participation points"></canvas></div>
+          <p class="note hidden" id="empty-participation"></p>
+        </section>
+        <section class="card">
+          <h3>PRs reviewed</h3>
+          <p class="subtitle">Pull requests from other people where a comment was left.</p>
+          <div class="chart"><canvas id="chart-prs_reviewed" role="img" aria-label="PRs reviewed"></canvas></div>
+          <p class="note hidden" id="empty-prs_reviewed"></p>
+        </section>
+        <section class="card">
+          <h3>Review value</h3>
+          <p class="subtitle">Comments left on other people's pull requests, plus half a point for each approval.</p>
+          <div class="chart"><canvas id="chart-review_value" role="img" aria-label="Review value"></canvas></div>
+          <p class="note hidden" id="empty-review_value"></p>
+        </section>
+      </div>
+      <div id="series-notes"></div>
+      <details class="raw-details">
+        <summary>Show the tickets and PRs</summary>
+        <h3 class="section-head">The work behind the numbers</h3>
+        <div id="person-stats" class="stats"></div>
+        <div class="cards">
+          <section class="card"><h3>Commits by week</h3><div id="person-commits"></div></section>
+          <section class="card"><h3>Reviews waiting on them</h3><div id="person-pending"></div></section>
+        </div>
+        <section class="card hidden" id="person-issues-card"><h3>Completed issues</h3><div id="person-issues"></div></section>
+        <section class="card"><h3>Tickets and Claude cost</h3><div id="person-tickets"></div></section>
+        <section class="card"><h3>Pull requests</h3><div id="person-prs"></div></section>
+        <section class="card"><h3>Reviews given</h3><div id="person-reviews"></div></section>
+      </details>
     </main>
   </div>
   <script src="/static/vendor/chart.umd.js"></script>
