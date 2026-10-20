@@ -164,9 +164,9 @@ def test_people_matrix_endpoint(tmp_path):
     client, *_ = make(tmp_path)
     body = client.get("/api/people-matrix", params={"team": "t1", "window": "month:2026-09"}).json()
     assert set(body) == {"window", "columns", "rows", "notes"}
-    assert body["columns"][0]["name"] == "prs_merged"
+    assert body["columns"][0]["name"] == "impact_points"
     ann = [r for r in body["rows"] if r["person_id"] == "p-ann"][0]
-    assert ann["cells"]["prs_merged"]["value"] == 3.0
+    assert ann["cells"]["review_follow_through"]["value"] == 0.0
     assert "p-cy" not in [r["person_id"] for r in body["rows"]]
     assert client.get("/api/people-matrix", params={"team": "nope"}).status_code == 404
     assert client.get("/api/people-matrix", params={"window": "weekly"}).status_code == 400

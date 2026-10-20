@@ -64,6 +64,7 @@ class Metric:
     description: str = ""
     min_denominator: float = 0.0
     sample_noun: str = "items"
+    group: str = "activity"
 
 
 def missing_sources(conn: sqlite3.Connection, metric: Metric) -> List[str]:
@@ -115,6 +116,7 @@ def describe(conn: sqlite3.Connection, metric: Metric) -> Dict[str, Any]:
         "needs": list(metric.needs),
         "better": metric.better,
         "description": metric.description,
+        "group": metric.group,
         "status": "waiting" if missing else "ok",
         "missing": missing,
     }

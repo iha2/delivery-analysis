@@ -11,6 +11,14 @@ from delivery_analysis.metrics.window import Window
 UNMAPPED_NAME = "Unmapped accounts"
 
 
+GROUP_ORDER = ("impact", "delivery", "participation")
+
+
+def _matrix_metrics():
+    """Per-person metrics of the impact model's groups, grouped in order, then in catalog order."""
+    return [m for group in GROUP_ORDER for m in METRICS if m.kind == PER_PERSON and m.group == group]
+
+
 def _cell(row: Dict[str, Any]) -> Dict[str, Any]:
     return {key: row.get(key) for key in ("value", "sample", "ranked", "rank", "confidence")}
 
@@ -26,7 +34,7 @@ def people_matrix(
     unmapped: Dict[str, Any] = {}
     notes: List[str] = []
     waiting: Dict[str, int] = {}
-    for metric in (m for m in METRICS if m.kind == PER_PERSON):
+    for metric in _matrix_metrics():
         result = run_metric(conn, metric, scope, window, people, history_days=history_days)
         columns.append({
             "name": metric.name, "label": result["label"], "unit": result["unit"], "better": result["better"],

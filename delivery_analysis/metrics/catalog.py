@@ -4,6 +4,7 @@ from typing import Dict, List
 
 from delivery_analysis.metrics import bitbucket as bb
 from delivery_analysis.metrics import impact as im
+from delivery_analysis.metrics import impact_model as imm
 from delivery_analysis.metrics import jira as jr
 from delivery_analysis.metrics import tokens as tk
 from delivery_analysis.metrics.registry import PER_PERSON, TEAM_BREAKDOWN, TEAM_SERIES, Metric
@@ -11,6 +12,8 @@ from delivery_analysis.metrics.registry import PER_PERSON, TEAM_BREAKDOWN, TEAM_
 BB = ("bitbucket",)
 CU = ("claude_usage",)
 JC = ("jira", "claude_usage")
+JB = ("jira", "bitbucket")
+JBC = ("jira", "bitbucket", "claude_usage")
 
 METRICS: List[Metric] = [
     Metric("prs_merged", "PRs merged", "count", PER_PERSON, BB, compute=bb.prs_merged,
@@ -88,6 +91,32 @@ METRICS: List[Metric] = [
     Metric("prs_with_issue_link", "PRs with an issue link", "ratio", PER_PERSON, ("bitbucket", "links"),
            aggregate="mean", compute=im.prs_with_issue_link,
            description="Share of merged pull requests linked to a Jira issue by key in the title or branch."),
+    Metric("impact_points", "Impact", "points", PER_PERSON, JB, group="impact", compute=imm.impact_points,
+           description="Story points of completed issues earned by delivery plus participation, shared out by "
+                       "evidence on the linked pull requests."),
+    Metric("impact_per_dollar", "Impact per dollar", "points_per_usd", PER_PERSON, JBC, aggregate="ratio",
+           group="impact", min_sample=3, min_denominator=20.0, sample_noun="completed tickets",
+           compute=imm.impact_per_dollar,
+           description="Impact points per dollar of the person's Claude cost in the window."),
+    Metric("delivery_points", "Delivery", "points", PER_PERSON, JB, group="delivery", compute=imm.delivery_points,
+           description="Story points earned as the pull request author and committer (the assignee when no "
+                       "pull request is linked)."),
+    Metric("delivery_speed", "Delivery speed", "hours", PER_PERSON, JB, better="lower", aggregate="median",
+           group="delivery", compute=imm.delivery_speed,
+           description="Median hours from an issue starting to its first linked pull request merging, for "
+                       "issues the person delivered."),
+    Metric("durability", "Durability", "ratio", PER_PERSON, JB, aggregate="ratio", group="delivery",
+           sample_noun="delivered issues", compute=imm.durability,
+           description="Share of delivered points on issues that were never reopened."),
+    Metric("participation_points", "Participation", "points", PER_PERSON, JB, group="participation",
+           compute=imm.participation_points,
+           description="Story points earned by commenting on and approving other people's pull requests."),
+    Metric("review_responsiveness", "Review responsiveness", "hours", PER_PERSON, BB, better="lower",
+           aggregate="median", group="participation", compute=imm.review_responsiveness,
+           description="Median hours from a pull request opening to the person's first review of it."),
+    Metric("review_follow_through", "Review follow-through", "ratio", PER_PERSON, BB, aggregate="mean",
+           group="participation", compute=imm.review_follow_through,
+           description="Share of assigned reviews the person approved or commented on."),
     Metric("documentation_activity", "Documentation activity", "count", TEAM_SERIES, ("confluence",),
            description="Confluence page edits per week."),
 ]

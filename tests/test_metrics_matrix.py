@@ -6,17 +6,20 @@ from delivery_analysis.metrics.registry import PER_PERSON, run_metric
 from delivery_analysis.metrics.window import make_window
 
 WINDOW = make_window(SEPT, TZ, TODAY)
-PER = [m for m in METRICS if m.kind == PER_PERSON]
+PER = [m for m in METRICS if m.kind == PER_PERSON and m.group != "activity"]
+MATRIX = ["impact_points", "impact_per_dollar", "delivery_points", "delivery_speed", "durability",
+          "participation_points", "review_responsiveness", "review_follow_through"]
 
 
 def test_columns_follow_catalog_order_with_status(conn):
     seed(conn)
     out = people_matrix(conn, Scope(), WINDOW)
-    assert [c["name"] for c in out["columns"]] == [m.name for m in PER]
+    assert [c["name"] for c in out["columns"]] == MATRIX
     by = {c["name"]: c for c in out["columns"]}
-    assert by["prs_merged"]["status"] == "ok" and by["prs_merged"]["missing"] == []
-    assert by["cost_spent"]["status"] == "waiting" and by["cost_spent"]["missing"] == ["claude_usage"]
-    assert set(by["prs_merged"]) == {"name", "label", "unit", "better", "description", "needs", "status", "missing"}
+    assert by["review_follow_through"]["status"] == "ok" and by["review_follow_through"]["missing"] == []
+    assert by["impact_points"]["status"] == "waiting" and by["impact_points"]["missing"] == ["jira"]
+    assert by["impact_per_dollar"]["status"] == "waiting" and by["impact_per_dollar"]["missing"] == ["jira", "claude_usage"]
+    assert set(by["impact_points"]) == {"name", "label", "unit", "better", "description", "needs", "status", "missing"}
     assert out["window"] == WINDOW.to_json()
 
 

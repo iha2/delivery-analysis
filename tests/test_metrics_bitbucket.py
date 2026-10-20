@@ -104,7 +104,7 @@ def test_the_catalog_has_every_planned_metric_and_waiting_ones_are_waiting(seede
             "review_load", "commits", "work_in_progress", "prs_merged_weekly", "lead_time_breakdown",
             "issues_done", "issues_done_weekly", "cycle_time", "story_points_done", "cost_spent",
             "story_points_per_dollar", "unattributed_cost_share", "ask_generate_ratio",
-            "prs_with_issue_link", "documentation_activity", "story_points_weekly", "points_by_type", "cycle_time_weekly", "cycle_time_summary", "prs_linked_weekly",
+            "impact_points", "impact_per_dollar", "delivery_points", "delivery_speed", "durability", "participation_points", "review_responsiveness", "review_follow_through", "prs_with_issue_link", "documentation_activity", "story_points_weekly", "points_by_type", "cycle_time_weekly", "cycle_time_summary", "prs_linked_weekly",
             "story_points_per_dollar_all_in", "story_points_per_dollar_weekly", "cost_by_purpose_weekly"} == names
     waiting = run(seeded, "story_points_per_dollar")
     assert waiting["status"] == "waiting" and waiting["missing"] == ["jira", "claude_usage"]
