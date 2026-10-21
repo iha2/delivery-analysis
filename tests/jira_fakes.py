@@ -199,6 +199,8 @@ class FakeJira:
         match = re.search(r'project = "([A-Za-z0-9_]+)"', jql)
         key = match.group(1) if match else None
         pool = [i for i in self.issues if i["fields"]["project"]["key"] == key]
+        if key is None and "project not in (" in jql:
+            pool = self._developer_pool(jql)
         lower = re.search(r'updated >= "(\d{4}/\d{2}/\d{2} \d{2}:\d{2})"', jql)
         if lower:
             floor = (
@@ -216,6 +218,29 @@ class FakeJira:
         if start + size < len(pool):
             out["nextPageToken"] = f"t{start + size}"
         return httpx.Response(200, json=out)
+
+    def _developer_pool(self, jql: str) -> List[Dict[str, Any]]:
+        """Issues outside the excluded projects whose `cf[N]` user fields hold a listed account."""
+        excluded = set(re.search(r"project not in \(([^)]*)\)", jql).group(1).replace('"', "").split(", "))
+        wanted: Dict[str, set] = {}
+        for number, ids in re.findall(r"cf\[(\d+)\] in \(([^)]*)\)", jql):
+            wanted[f"customfield_{number}"] = set(ids.replace('"', "").split(", "))
+
+        def matches(fields: Dict[str, Any]) -> bool:
+            for field_id, accounts in wanted.items():
+                value = fields.get(field_id)
+                if isinstance(value, dict) and value.get("accountId") in accounts:
+                    return True
+            return False
+
+        return [
+            i for i in self.issues
+            if i["fields"]["project"]["key"] not in excluded and matches(i["fields"])
+        ]
+
+    def add_dev_fields(self, dev1: str = "customfield_12001", dev2: str = "customfield_12002") -> None:
+        for field_id, name in ((dev1, "Dev1"), (dev2, "Dev2")):
+            self.fields.append({"id": field_id, "name": name, "custom": True, "schema": {"type": "user"}})
 
     def _bulkfetch(self, body: Dict[str, Any]) -> httpx.Response:
         wanted = set(body.get("fieldIds") or [])

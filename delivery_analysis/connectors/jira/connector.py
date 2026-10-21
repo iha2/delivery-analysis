@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import logging
 import sqlite3
+from collections import Counter
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterator, List, Optional, Set
 from zoneinfo import ZoneInfo
@@ -14,8 +16,9 @@ from delivery_analysis.connectors.jira.client import (
     JiraError,
     NotFoundError,
 )
-from delivery_analysis.connectors.jira.fields import SEARCH_FIELDS, FieldCatalogue
-from delivery_analysis.connectors.jira.jql import project_jql
+from delivery_analysis.connectors.jira.fields import SEARCH_FIELDS, FieldCatalogue, points_value
+from delivery_analysis.connectors.jira.jql import ACCOUNT_ID, developer_jql, project_jql
+from delivery_analysis.connectors.jira.statuses import SEED
 from delivery_analysis.model.records import Batch, RawPayload, Record
 from delivery_analysis.store.db import connect
 from delivery_analysis.store import project_selection
@@ -24,6 +27,13 @@ from delivery_analysis.teams.discover import window_start
 
 SOURCE = "jira"
 STATUS_FIELDS = ["status"]
+DEVELOPERS_SCOPE = "developers"  # Jira project keys are upper case, so this never collides with one
+DEV_FIELD_NAMES = ("Dev1", "Dev2")
+POINTS_FALLBACK_NAME = "Story point estimate"
+DEFAULT_EXCLUDED_TYPES = "Epic,Initiative"
+UNSEEDED_CATEGORY = "todo"
+
+log = logging.getLogger(__name__)
 
 
 def credential_problems(client: JiraClient) -> List[str]:
@@ -73,6 +83,7 @@ class JiraConnector:
         self._max_pages = max_pages
         self._tz: Optional[ZoneInfo] = None
         self.unknown_statuses: Set[str] = set()
+        self.notices: List[str] = []
 
     # --- selection -------------------------------------------------------------------------
 
@@ -86,7 +97,8 @@ class JiraConnector:
             conn.close()
 
     def scopes(self) -> List[str]:
-        return sorted(row["project_key"] for row in self._selected())
+        keys = sorted(row["project_key"] for row in self._selected())
+        return keys + [DEVELOPERS_SCOPE] if keys else keys
 
     def _project(self, scope: str) -> Dict[str, str]:
         for row in self._selected():
@@ -111,9 +123,12 @@ class JiraConnector:
     # --- sync ------------------------------------------------------------------------------
 
     def sync(self, scope: str, since: Optional[str]) -> Iterator[Batch]:
-        project = self._project(scope)
+        self.notices = []
         try:
-            yield from self._sync_project(scope, project, since)
+            if scope == DEVELOPERS_SCOPE:
+                yield from self._sync_developers(since)
+            else:
+                yield from self._sync_project(scope, self._project(scope), since)
         except BudgetExhausted:
             return  # the run budget is used up; the next sync continues from the last committed page
 
@@ -156,6 +171,19 @@ class JiraConnector:
         started = self._now()
         cutoff = since or window_start(started, self._window_days)
         jql = project_jql(scope, cutoff, tz)
+
+        def convert(issue: Dict[str, Any], history: List[Dict[str, Any]]) -> Optional[normalize.IssueResult]:
+            return normalize.issue_records(issue, project, status_map, catalogue, history)
+
+        yield from self._pages(scope, jql, convert)
+
+    def _pages(
+        self,
+        scope: str,
+        jql: str,
+        convert: Callable[[Dict[str, Any], List[Dict[str, Any]]], Optional[normalize.IssueResult]],
+    ) -> Iterator[Batch]:
+        """One batch per search page; `convert` returns None to skip an issue."""
         token: Optional[str] = None
         seen: Set[str] = set()
         pages = 0
@@ -172,9 +200,9 @@ class JiraConnector:
             raws: List[RawPayload] = []
             updated: List[str] = []
             for issue in issues:
-                result = normalize.issue_records(
-                    issue, project, status_map, catalogue, histories.get(str(issue["id"]), [])
-                )
+                result = convert(issue, histories.get(str(issue["id"]), []))
+                if result is None:
+                    continue
                 records.extend(result.records)
                 raws.append(result.raw)
                 self.unknown_statuses.update(result.unknown_statuses)
@@ -185,3 +213,86 @@ class JiraConnector:
             if not token or token in seen:
                 return
             seen.add(token)
+
+    # --- developer scope -------------------------------------------------------------------
+
+    def _team_accounts(self) -> List[str]:
+        """Account ids of active team members (bitbucket and jira identities) fit for JQL."""
+        conn = connect(self._db_path)
+        try:
+            rows = conn.execute(
+                "SELECT DISTINCT i.account_id AS account_id FROM identity i "
+                "JOIN team_member m ON m.person_id = i.person_id "
+                "WHERE m.status = 'active' AND i.source IN ('bitbucket', 'jira') "
+                "ORDER BY i.account_id"
+            ).fetchall()
+        except sqlite3.OperationalError:
+            return []  # database not migrated yet
+        finally:
+            conn.close()
+        return [row["account_id"] for row in rows if ACCOUNT_ID.match(row["account_id"] or "")]
+
+    def _note(self, message: str) -> None:
+        self.notices.append(message)
+        log.info("%s/%s: %s", SOURCE, DEVELOPERS_SCOPE, message)
+
+    def _sync_developers(self, since: Optional[str]) -> Iterator[Batch]:
+        selected = self._selected()
+        if not selected:
+            self._note("No Jira project is selected, so there is nothing to look up by developer.")
+            return
+        accounts = self._team_accounts()
+        if not accounts:
+            self._note("No active team member has a Jira or Bitbucket account yet, so no developer tickets were fetched.")
+            return
+        catalogue = FieldCatalogue(self._client.fields())
+        dev_fields = [fid for name in DEV_FIELD_NAMES for fid in catalogue.ids_by_name(name)]
+        if not dev_fields:
+            self._note("This Jira site has no Dev1 or Dev2 field, so no developer tickets were fetched.")
+            return
+        tz = self._timezone()
+        cutoff = since or window_start(self._now(), self._window_days)
+        keys = sorted(row["project_key"] for row in selected)
+        jql = developer_jql(dev_fields, accounts, keys, cutoff, tz)
+        points_fields = self._points_fields(selected, catalogue)
+        excluded = set(keys)
+
+        def convert(issue: Dict[str, Any], history: List[Dict[str, Any]]) -> Optional[normalize.IssueResult]:
+            fields = issue.get("fields") or {}
+            own = (fields.get("project") or {}).get("key")
+            if own in excluded:
+                return None  # a selected project's own sync owns it
+            project = {
+                "project_key": own,
+                "story_points_field": next(
+                    (f for f in points_fields if points_value(fields.get(f)) is not None),
+                    points_fields[0] if points_fields else None,
+                ),
+                "excluded_types": DEFAULT_EXCLUDED_TYPES,
+            }
+            status_map = self._developer_status_map(fields, history)
+            return normalize.issue_records(issue, project, status_map, catalogue, history)
+
+        yield from self._pages(DEVELOPERS_SCOPE, jql, convert)
+
+    @staticmethod
+    def _points_fields(selected: List[Dict[str, str]], catalogue: FieldCatalogue) -> List[str]:
+        """The points field the selected projects use (most common first), then the site's estimate fields."""
+        used = Counter(row["story_points_field"] for row in selected if row.get("story_points_field"))
+        ordered = [field for field, _ in sorted(used.items(), key=lambda item: (-item[1], item[0]))]
+        for field in catalogue.ids_by_name(POINTS_FALLBACK_NAME):
+            if field not in ordered:
+                ordered.append(field)
+        return ordered
+
+    def _developer_status_map(self, fields: Dict[str, Any], history: List[Dict[str, Any]]) -> Dict[str, str]:
+        """SEED by name; a name outside it is reported and kept as `todo`, which never counts as delivered."""
+        names = {(fields.get("status") or {}).get("name")}
+        for transition in normalize.status_transitions(history):
+            names.update((transition.from_status, transition.to_status))
+        mapping = dict(SEED)
+        for name in names:
+            if name and name not in SEED:
+                mapping[name] = UNSEEDED_CATEGORY
+                self.unknown_statuses.add(name)
+        return mapping

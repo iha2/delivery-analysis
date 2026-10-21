@@ -51,6 +51,15 @@ class FieldCatalogue:
             return field_id
         return f"{slug}_{field_id.split('_', 1)[1]}"
 
+    def ids_by_name(self, name: str) -> List[str]:
+        """Custom field ids whose display name equals `name` (case-insensitive), sorted."""
+        wanted = name.strip().lower()
+        return sorted(
+            field_id
+            for field_id, meta in self._by_id.items()
+            if self.is_custom(field_id) and str(meta.get("name") or "").strip().lower() == wanted
+        )
+
     def points_candidates(self) -> List[str]:
         found = []
         for field_id, meta in self._by_id.items():

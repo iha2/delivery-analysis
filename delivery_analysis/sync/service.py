@@ -7,6 +7,7 @@ from typing import Callable, List, Mapping, Optional, Sequence, Tuple
 from delivery_analysis.code.build import build_code
 from delivery_analysis.connectors.base import Connector
 from delivery_analysis.linking.pr_keys import link_pull_requests
+from delivery_analysis.metrics.delivered import delivered_statuses, derive_delivered
 from delivery_analysis.metrics.impact_build import rebuild_impact
 from delivery_analysis.settings import Settings, redact, secret_values
 from delivery_analysis.sync.runner import SourceResult, run_sync, utc_now_iso
@@ -55,6 +56,10 @@ def sync_and_reconcile(
             lines.extend(build_code(conn, settings, environ, fetch=fetch, log=None).lines)
         except Exception as exc:  # the code build must never fail the sync
             lines.append("Code build failed: " + redact(str(exc) or exc.__class__.__name__, secrets))
+        try:
+            derive_delivered(conn, delivered_statuses(environ))
+        except Exception as exc:  # a date problem must never fail the sync
+            lines.append("Delivered date update failed: " + redact(str(exc) or exc.__class__.__name__, secrets))
         try:
             lines.extend(redact(line, secrets) for line in rebuild_impact(conn, utc_now_iso()).lines())
         except Exception as exc:

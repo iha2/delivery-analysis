@@ -11,7 +11,7 @@ def test_server_starts_on_an_empty_database_in_a_new_folder(tmp_path):
     target = tmp_path / "fresh" / "folder" / "delivery.sqlite"
     client = TestClient(create_app(target), base_url="http://127.0.0.1")
     body = client.get("/api/health").json()
-    assert body == {"schema_version": 7, "sources": [], "unmapped_identities": 0}
+    assert body == {"schema_version": 8, "sources": [], "unmapped_identities": 0}
     assert target.is_file()
 
 

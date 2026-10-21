@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from datetime import date, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 
+from delivery_analysis.metrics.delivered import DELIVERED_AT_SQL
 from delivery_analysis.metrics.people import Scope
 from delivery_analysis.metrics.registry import Observations
 from delivery_analysis.metrics.window import Window, local_day, week_start
@@ -52,9 +53,10 @@ def load_cohort(conn: sqlite3.Connection, window: Window) -> Cohort:
     coverage = start_row["d"] if start_row else None
     no_points = early = 0
     for row in conn.execute(
-        "SELECT w.source, w.source_id, w.key, w.type, w.story_points, w.started_at, w.resolved_at "
-        "FROM work_item w WHERE w.source = 'jira' AND w.status_category = 'done' "
-        "AND w.resolved_at >= ? AND w.resolved_at < ? AND EXISTS (SELECT 1 FROM property p "
+        "SELECT w.source, w.source_id, w.key, w.type, w.story_points, w.started_at, "
+        + DELIVERED_AT_SQL + " AS resolved_at "
+        "FROM work_item w WHERE w.source = 'jira' "
+        "AND " + DELIVERED_AT_SQL + " >= ? AND " + DELIVERED_AT_SQL + " < ? AND EXISTS (SELECT 1 FROM property p "
         "WHERE p.record_kind = 'work_item' AND p.record_id = w.source_id AND p.name = 'counts_for_impact' "
         "AND p.value = '1')",
         (window.start, window.end),

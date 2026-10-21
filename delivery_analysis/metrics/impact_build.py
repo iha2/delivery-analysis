@@ -14,7 +14,8 @@ from datetime import datetime, timedelta
 from statistics import mean, median
 from typing import Dict, List, Optional, Set, Tuple
 
-from delivery_analysis.metrics.credit import actor_for
+from delivery_analysis.metrics.credit import actor_for, dev_shares
+from delivery_analysis.metrics.delivered import DELIVERED_AT_SQL
 
 REVIEWER_RATE = 0.05
 OWNER_RATE = 0.005
@@ -24,11 +25,12 @@ BASELINE_MIN_TICKETS = 5
 _STAMP = "%Y-%m-%dT%H:%M:%SZ"
 
 _COHORT_SQL = (
-    "SELECT w.source_id, w.assignee_account, w.resolved_at, w.story_points FROM work_item w "
+    "SELECT w.source_id, w.assignee_account, " + DELIVERED_AT_SQL + " AS resolved_at, w.story_points "
+    "FROM work_item w "
     "JOIN property c ON c.record_kind = 'work_item' AND c.record_id = w.source_id "
     "AND c.name = 'counts_for_impact' AND c.value = '1' "
-    "WHERE w.source = 'jira' AND w.status_category = 'done' AND w.resolved_at IS NOT NULL "
-    "AND w.story_points IS NOT NULL ORDER BY w.resolved_at, w.source_id"
+    "WHERE w.source = 'jira' AND " + DELIVERED_AT_SQL + " IS NOT NULL "
+    "AND w.story_points IS NOT NULL ORDER BY " + DELIVERED_AT_SQL + ", w.source_id"
 )
 _PRS_SQL = (
     "SELECT DISTINCT l.to_id AS issue_id, c.source_id AS pr_id, c.repository_id AS repo, "
@@ -211,6 +213,7 @@ def rebuild_impact(conn: sqlite3.Connection, now: str) -> ImpactSummary:
         if sum(pr.scope for pr in with_files) > 0 and total > 0:
             scoped[issue_id] = total
     resolved = {row["source_id"]: row["resolved_at"] for row in cohort}
+    devs = dev_shares(conn, resolved)
 
     pr_rows: List[tuple] = []
     fix_rows: List[tuple] = []
@@ -234,8 +237,8 @@ def rebuild_impact(conn: sqlite3.Connection, now: str) -> ImpactSummary:
             factors[issue_id], values[issue_id] = 1.0, points
             for pr in prs:
                 pr_rows.append((pr.pr_id, issue_id, None, points / len(prs), 1 if pr.files else 0))
-            if assignee:
-                share(issue_id, assignee, delivery=points)
+            for owner, fraction in (devs.get(issue_id) or ({assignee: 1.0} if assignee else {})).items():
+                share(issue_id, owner, delivery=points * fraction)
             continue
         window_start = _minus_days(issue["resolved_at"], BASELINE_DAYS)
         baseline = [

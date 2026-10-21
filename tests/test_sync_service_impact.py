@@ -95,3 +95,21 @@ def test_fetch_code_without_a_token_falls_back_to_no_fetch(tmp_path, conn, monke
     monkeypatch.setattr(service, "rebuild_impact", lambda c, n: SUMMARY)
     service.sync_and_reconcile(conn, [], settings(), {}, fetch_code=True)
     assert calls == [False]
+
+
+def test_delivered_dates_are_derived_before_the_impact_rebuild_and_a_failure_never_fails_the_sync(conn, monkeypatch):
+    calls = []
+    monkeypatch.setattr(service, "build_code", lambda *a, **k: CodeBuildResult(lines=[]))
+    monkeypatch.setattr(service, "rebuild_impact", lambda c, now: calls.append("impact") or SUMMARY)
+    monkeypatch.setattr(
+        service, "derive_delivered", lambda c, statuses=None: calls.append(("derive", tuple(statuses))) or 0
+    )
+    service.sync_and_reconcile(conn, [], settings(), {"DELIVERED_STATUSES": "Shipped"})
+    assert calls == [("derive", ("Shipped",)), "impact"]
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("bad date tok-XYZ")
+
+    monkeypatch.setattr(service, "derive_delivered", boom)
+    _, lines, failed = service.sync_and_reconcile(conn, [], settings(), {"ATLASSIAN": "tok-XYZ"})
+    assert "Delivered date update failed: bad date ***" in lines and failed == 0

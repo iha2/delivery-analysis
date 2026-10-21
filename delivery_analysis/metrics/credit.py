@@ -3,8 +3,9 @@ from __future__ import annotations
 import sqlite3
 from collections import Counter
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Dict, Iterable, List, Optional, Set, Tuple
 
+from delivery_analysis.metrics.delivered import DELIVERED_AT_SQL
 from delivery_analysis.metrics.people import People, Scope, actor_key
 from delivery_analysis.metrics.window import Window
 
@@ -18,13 +19,29 @@ CLAUDE_CREDIT_NOTE = (
     "pull requests and {rest} to the assignee because no pull request is linked."
 )
 
+DEV_CREDIT_NOTE = (
+    "{dev} of {n} completed issue(s) were credited to the Dev1/Dev2 fields, {pr} to the authors of their linked "
+    "pull requests and {rest} to the assignee because no pull request is linked."
+)
+
+CLAUDE_DEV_CREDIT_NOTE = (
+    "{dev} of {n} completed issue(s) were credited to the Dev1/Dev2 fields, {ev} by Claude-era evidence, {pr} to "
+    "the authors of their linked pull requests and {rest} to the assignee because no pull request is linked."
+)
+
+_DEV_SQL = (
+    "SELECT record_id, name, value FROM property WHERE record_kind = 'work_item' "
+    "AND (name LIKE 'dev1!_%' ESCAPE '!' OR name LIKE 'dev2!_%' ESCAPE '!') "
+    "AND value IS NOT NULL AND TRIM(value) != '' ORDER BY record_id, name"
+)
+
 _DONE_SQL = (
-    "SELECT w.source_id, w.key, w.type, w.assignee_account, w.started_at, w.resolved_at, w.story_points "
-    "FROM work_item w "
+    "SELECT w.source_id, w.key, w.type, w.assignee_account, w.started_at, " + DELIVERED_AT_SQL + " AS resolved_at, "
+    "w.story_points FROM work_item w "
     "JOIN property c ON c.record_kind = 'work_item' AND c.record_id = w.source_id "
     "AND c.name = 'counts_for_impact' AND c.value = '1' "
-    "WHERE w.source = 'jira' AND w.status_category = 'done' "
-    "AND w.resolved_at >= ? AND w.resolved_at < ? ORDER BY w.resolved_at, w.key"
+    "WHERE w.source = 'jira' AND " + DELIVERED_AT_SQL + " >= ? AND " + DELIVERED_AT_SQL + " < ? "
+    "ORDER BY " + DELIVERED_AT_SQL + ", w.key"
 )
 _PR_AUTHORS_SQL = (
     "SELECT DISTINCT l.to_id AS issue_id, c.source_id AS pr_id, c.author_account AS author "
@@ -52,13 +69,37 @@ class Credit:
     `issues` are the countable issues completed in the window, oldest first. `shares` maps an issue id to
     `{actor_key: share}` (shares of one issue sum to 1; an empty dict means nobody can be credited).
     `by_pr` holds the issues credited by pull request evidence rather than by assignee; `by_evidence` those
-    credited by the Claude-era `ticket_credit` shares (keyed `person:<id>`).
+    credited by the Claude-era `ticket_credit` shares (keyed `person:<id>`); `by_dev` those credited by the
+    Jira Dev1/Dev2 fields.
     """
 
     issues: List[sqlite3.Row] = field(default_factory=list)
     shares: Dict[str, Dict[str, float]] = field(default_factory=dict)
     by_pr: Set[str] = field(default_factory=set)
     by_evidence: Set[str] = field(default_factory=set)
+    by_dev: Set[str] = field(default_factory=set)
+
+
+def dev_shares(conn: sqlite3.Connection, issue_ids: Iterable[str]) -> Dict[str, Dict[str, float]]:
+    """Shares from the Jira Dev1 and Dev2 fields (properties `dev1_*`, `dev2_*` holding account ids).
+
+    Two different developers get half each; one, or the same one twice, gets the whole issue. Issues
+    with neither field set are absent.
+    """
+    wanted = set(issue_ids)
+    if not wanted:
+        return {}
+    accounts: Dict[str, Dict[str, str]] = {}
+    for row in conn.execute(_DEV_SQL):
+        if row["record_id"] in wanted:
+            slot = accounts.setdefault(row["record_id"], {})
+            slot.setdefault(row["name"][:4], row["value"].strip())
+    shares: Dict[str, Dict[str, float]] = {}
+    for issue_id, slots in accounts.items():
+        keys = {actor_for(account) for account in slots.values()} - {None}
+        if keys:
+            shares[issue_id] = {key: 1.0 / len(keys) for key in sorted(keys)}
+    return shares
 
 
 def completed_issues(conn: sqlite3.Connection, window: Window) -> List[sqlite3.Row]:
@@ -66,10 +107,11 @@ def completed_issues(conn: sqlite3.Connection, window: Window) -> List[sqlite3.R
 
 
 def credit_for(conn: sqlite3.Connection, window: Window) -> Credit:
-    """One credit rule. Spec 4's `ticket_credit` shares win when the issue has any; otherwise the authors of
-    linked pull requests, split by their share of those pull requests; otherwise the assignee."""
+    """One credit rule. The Jira Dev1/Dev2 fields win when set; then spec 4's `ticket_credit` shares; then the
+    authors of linked pull requests, split by their share of those pull requests; otherwise the assignee."""
     issues = completed_issues(conn, window)
     wanted = {row["source_id"] for row in issues}
+    devs = dev_shares(conn, wanted)
     evidence: Dict[str, Dict[str, float]] = {}
     for row in conn.execute("SELECT work_item_source, work_item_id, person_id, share FROM ticket_credit"):
         if row["work_item_source"] == "jira" and row["work_item_id"] in wanted:
@@ -81,6 +123,10 @@ def credit_for(conn: sqlite3.Connection, window: Window) -> Credit:
     credit = Credit(issues=issues)
     for row in issues:
         issue_id = row["source_id"]
+        if devs.get(issue_id):
+            credit.shares[issue_id] = devs[issue_id]
+            credit.by_dev.add(issue_id)
+            continue
         if evidence.get(issue_id):
             credit.shares[issue_id] = evidence[issue_id]
             credit.by_evidence.add(issue_id)
@@ -103,10 +149,14 @@ def first_merges(conn: sqlite3.Connection) -> Dict[str, str]:
 
 def credit_note(credit: Credit) -> Optional[str]:
     """Explains how much was credited by evidence rather than by assignee; nothing to say when none was."""
-    if not credit.by_pr and not credit.by_evidence:
+    if not credit.by_pr and not credit.by_evidence and not credit.by_dev:
         return None
     credited = [row for row in credit.issues if credit.shares.get(row["source_id"])]
-    pr, ev, n = len(credit.by_pr), len(credit.by_evidence), len(credited)
+    dev, pr, ev, n = len(credit.by_dev), len(credit.by_pr), len(credit.by_evidence), len(credited)
+    if dev:
+        if not ev:
+            return DEV_CREDIT_NOTE.format(dev=dev, pr=pr, n=n, rest=n - dev - pr)
+        return CLAUDE_DEV_CREDIT_NOTE.format(dev=dev, ev=ev, pr=pr, n=n, rest=n - dev - pr - ev)
     if not ev:
         return CREDIT_NOTE.format(pr=pr, n=n, rest=n - pr)
     return CLAUDE_CREDIT_NOTE.format(ev=ev, pr=pr, n=n, rest=n - pr - ev)

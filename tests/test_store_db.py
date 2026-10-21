@@ -30,9 +30,9 @@ def test_connect_creates_a_missing_folder_and_uses_wal(tmp_path):
 def test_migrate_creates_every_table_and_is_idempotent(tmp_path):
     conn = db.connect(tmp_path / "d.sqlite")
     assert db.current_version(conn) == 0
-    assert db.migrate(conn) == 7
+    assert db.migrate(conn) == 8
     assert EXPECTED_TABLES <= table_names(conn)
-    assert db.migrate(conn) == 7
+    assert db.migrate(conn) == 8
     conn.close()
 
 

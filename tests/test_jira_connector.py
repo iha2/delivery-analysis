@@ -35,6 +35,11 @@ def build(tmp_path, api, *, budget=600, select=True, window_days=90, now=lambda:
     return conn, jcn.JiraConnector(client, path, window_days=window_days, now=now), client
 
 
+def md_result(results):
+    """The MD project's result; the developers scope also runs and is covered in test_jira_developer_scope."""
+    return next(r for r in results if r.scope == "MD")
+
+
 def count(conn, table):
     return conn.execute(f"SELECT COUNT(*) AS n FROM {table}").fetchone()["n"]
 
@@ -81,14 +86,14 @@ def test_scopes_are_the_selected_project_keys(tmp_path):
     api = fake_api()
     conn, connector, _ = build(tmp_path, api)
     ps.add_project(conn, "jira", "AA", "2", "Aye", None, NOW)
-    assert connector.scopes() == ["AA", "MD"]
+    assert connector.scopes() == ["AA", "MD", "developers"]
 
 
 def test_a_full_sync_writes_issues_history_identities_links_and_properties(tmp_path):
     api = fake_api()
     populate(api)
     conn, connector, _ = build(tmp_path, api)
-    (result,) = run_sync(conn, [connector], now=lambda: NOW)
+    result = md_result(run_sync(conn, [connector], now=lambda: NOW))
     assert (result.status, result.records > 0) == ("ok", True)
     items = {r["key"]: dict(r) for r in conn.execute("SELECT * FROM work_item")}
     assert items["MD-1"]["status_category"] == "done"
@@ -127,7 +132,7 @@ def test_an_issue_whose_history_spans_two_bulkfetch_pages_is_stored_once_and_who
          history(4, "2026-10-05T10:00:00Z", "In Progress", "COMPLETED")],
     )
     conn, connector, _ = build(tmp_path, api)
-    (result,) = run_sync(conn, [connector], now=lambda: NOW)
+    result = md_result(run_sync(conn, [connector], now=lambda: NOW))
     assert result.status == "ok"
     assert api.count("/changelog/bulkfetch") == 2
     assert count(conn, "work_item_transition") == 4
@@ -163,7 +168,7 @@ def test_an_unmapped_current_status_fails_before_any_search_or_write(tmp_path):
     api.projects["MD"]["statuses"] = list(SEED) + ["Brand New"]
     populate(api)
     conn, connector, _ = build(tmp_path, api)
-    (result,) = run_sync(conn, [connector], now=lambda: NOW)
+    result = md_result(run_sync(conn, [connector], now=lambda: NOW))
     assert result.status == "failed"
     assert "Brand New" in result.error and 'projects map jira:MD "<status>"' in result.error
     assert count(conn, "work_item") == 0 and api.count("/search/jql") == 0
@@ -173,7 +178,7 @@ def test_an_unknown_name_in_old_history_is_remembered_not_fatal(tmp_path):
     api = fake_api()
     api.add_issue(issue(1, "MD-1", status="In Progress"), [history(1, "2026-10-02T10:00:00Z", "Retired Status", "In Progress")])
     conn, connector, _ = build(tmp_path, api)
-    (result,) = run_sync(conn, [connector], now=lambda: NOW)
+    result = md_result(run_sync(conn, [connector], now=lambda: NOW))
     assert result.status == "ok" and connector.unknown_statuses == {"Retired Status"}
 
 
@@ -182,7 +187,7 @@ def test_the_request_budget_ends_the_project_cleanly_and_the_next_sync_continues
     for number in range(1, 4):
         api.add_issue(issue(3000 + number, f"MD-{number}", updated=f"2026-10-0{number}T10:00:00.000-0700"))
     conn, connector, client = build(tmp_path, api, budget=7)
-    (result,) = run_sync(conn, [connector], now=lambda: NOW)
+    result = md_result(run_sync(conn, [connector], now=lambda: NOW))
     assert result.status == "ok"
     done = count(conn, "work_item")
     assert 0 < done < 3
@@ -207,7 +212,7 @@ def test_a_quota_stop_fails_the_project_and_keeps_earlier_pages(tmp_path):
         return original(body)
 
     api._search = flaky
-    (result,) = run_sync(conn, [connector], now=lambda: NOW)
+    result = md_result(run_sync(conn, [connector], now=lambda: NOW))
     assert result.status == "failed" and "quota" in result.error
     assert count(conn, "work_item") == 1
 
@@ -216,7 +221,7 @@ def test_a_malformed_timestamp_fails_the_page_and_writes_nothing_from_it(tmp_pat
     api = fake_api()
     api.add_issue(issue(1, "MD-1", created="someday"))
     conn, connector, _ = build(tmp_path, api)
-    (result,) = run_sync(conn, [connector], now=lambda: NOW)
+    result = md_result(run_sync(conn, [connector], now=lambda: NOW))
     assert result.status == "failed" and count(conn, "work_item") == 0
 
 
@@ -242,5 +247,5 @@ def test_recent_dates_in_the_live_offset_form_sync_with_the_real_clock(tmp_path)
     api = fake_api()
     api.add_issue(issue(1, "MD-1", updated=jira_ts(2), created=jira_ts(5)))
     conn, connector, _ = build(tmp_path, api, now=utc_now_iso)
-    (result,) = run_sync(conn, [connector])
+    result = md_result(run_sync(conn, [connector]))
     assert result.status == "ok"

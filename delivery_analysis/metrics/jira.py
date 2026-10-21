@@ -4,6 +4,7 @@ import sqlite3
 from typing import Any, Dict, List, Optional, Tuple
 
 from delivery_analysis.metrics.credit import credit_for, credit_note, scoped
+from delivery_analysis.metrics.delivered import DELIVERED_AT_SQL
 from delivery_analysis.metrics.people import People, Scope, actor_key
 from delivery_analysis.metrics.registry import Observations
 from delivery_analysis.metrics.window import Window, hours_between, weekly
@@ -15,12 +16,12 @@ NO_DATE_NOTE = "{n} done issue(s) have no resolved date and are not counted."
 NO_POINTS_NOTE = "{n} completed issue(s) have no story points and are not counted."
 
 _DONE_SQL = (
-    "SELECT w.source_id, w.assignee_account, w.started_at, w.resolved_at, w.story_points "
-    "FROM work_item w "
+    "SELECT w.source_id, w.assignee_account, w.started_at, " + DELIVERED_AT_SQL + " AS resolved_at, "
+    "w.story_points FROM work_item w "
     "JOIN property c ON c.record_kind = 'work_item' AND c.record_id = w.source_id "
     "AND c.name = 'counts_for_impact' AND c.value = '1' "
-    "WHERE w.source = 'jira' AND w.status_category = 'done' "
-    "AND w.resolved_at >= ? AND w.resolved_at < ? ORDER BY w.resolved_at"
+    "WHERE w.source = 'jira' AND " + DELIVERED_AT_SQL + " >= ? AND " + DELIVERED_AT_SQL + " < ? "
+    "ORDER BY " + DELIVERED_AT_SQL
 )
 
 
@@ -28,7 +29,7 @@ _NO_DATE_SQL = (
     "SELECT w.assignee_account FROM work_item w "
     "JOIN property c ON c.record_kind = 'work_item' AND c.record_id = w.source_id "
     "AND c.name = 'counts_for_impact' AND c.value = '1' "
-    "WHERE w.source = 'jira' AND w.status_category = 'done' AND w.resolved_at IS NULL"
+    "WHERE w.source = 'jira' AND w.status_category = 'done' AND " + DELIVERED_AT_SQL + " IS NULL"
 )
 
 
