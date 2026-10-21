@@ -9,7 +9,7 @@ import sqlite3
 import statistics
 from dataclasses import replace
 from datetime import date, timedelta, timezone, tzinfo
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence
 
 from delivery_analysis.metrics.catalog import BY_NAME
 from delivery_analysis.metrics.people import People, Scope
@@ -48,7 +48,9 @@ def _penalties(conn: sqlite3.Connection, people: People, start: str, end: str) -
 def person_series(
     conn: sqlite3.Connection, person_id: str, scope: Scope, *, end: date, window_days: int = 30,
     step_days: int = 7, history_days: int = 180, tz: Optional[tzinfo] = None,
+    group: Optional[Sequence[str]] = None,
 ) -> Dict[str, Any]:
+    """`group` limits the team medians to the chosen people; None, or nobody in scope, means everyone in scope."""
     tz = tz or timezone.utc
     people = People(conn)
     days = _dates(end, step_days, history_days)
@@ -57,7 +59,10 @@ def person_series(
     medians: Dict[str, List[Optional[float]]] = {key: [] for key in KEYS}
     notes: List[str] = []
     impact_ok = False
-    members = list(scope.members) if scope.members is not None else [row["person_id"] for row in people.all()]
+    everyone = list(scope.members) if scope.members is not None else [row["person_id"] for row in people.all()]
+    chosen = [member for member in (group or []) if member in everyone]
+    members = chosen or everyone
+    counted = set(members)
     metrics = {key: replace(BY_NAME[name], windowed=False) for key, name in METRIC_OF.items()}
     for window in windows:
         for key, metric in metrics.items():
@@ -75,7 +80,8 @@ def person_series(
                 have = {row["person_id"]: row["value"] for row in rows}
                 medians[key].append(_median([have.get(member) or 0.0 for member in members]))
             else:
-                medians[key].append(_median([row["value"] for row in rows if row["value"] is not None]))
+                medians[key].append(_median([row["value"] for row in rows
+                                             if row["value"] is not None and row["person_id"] in counted]))
     first, last = windows[0].start, windows[-1].end
     shares = _penalties(conn, people, first, last) if impact_ok else []
     for window in windows:
@@ -88,4 +94,5 @@ def person_series(
     return {
         "dates": [day.isoformat() for day in days], "window_days": window_days,
         "series": series, "team_median": medians, "notes": notes,
+        "comparison": {"custom": bool(chosen), "size": len(members)},
     }

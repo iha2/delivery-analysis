@@ -1,6 +1,7 @@
 (function () {
   "use strict";
   const DA = window.DA;
+  const PersonCharts = window.PersonCharts;
   const STATS = [["prs_merged", "PRs merged"], ["reviews_given", "Reviews given"], ["reviews_assigned", "Reviews assigned"],
                  ["review_response_rate", "Response rate"], ["time_to_merge", "Median time to merge"], ["commits", "Commits"],
                  ["story_points_done", "Story points done"], ["issues_done", "Issues done"], ["cycle_time", "Median cycle time"],
@@ -28,108 +29,58 @@
   }
 
 
-  const charts = {};
-
-  function token(name) { return getComputedStyle(document.body).getPropertyValue(name).trim(); }
-
-  function hasValues(values) { return values.some(function (v) { return v !== null && v !== undefined; }); }
-
-  function empty(key, text) {
-    if (charts[key]) { charts[key].destroy(); delete charts[key]; }
-    const note = document.getElementById("empty-" + key);
-    note.textContent = text;
-    note.classList.toggle("hidden", !text);
-    document.getElementById("chart-" + key).parentNode.classList.toggle("hidden", !!text);
-    return !!text;
+  function remembered() {
+    try { return window.localStorage.getItem("da.person") || ""; } catch (e) { return ""; }
   }
 
-  function draw(key, config) {
-    if (empty(key, "")) { return; }
-    if (typeof window.Chart === "undefined") { empty(key, "Charts are unavailable because Chart.js did not load."); return; }
-    charts[key] = new window.Chart(document.getElementById("chart-" + key), config);
+  function remember(id) {
+    try { window.localStorage.setItem("da.person", id); } catch (e) { /* storage is off: nothing to remember */ }
   }
 
-  function axes(stacked, horizontal) {
-    const grid = token("--grid");
-    const ink = token("--text-secondary");
-    return {
-      x: { stacked: stacked, beginAtZero: true, grid: { color: horizontal ? grid : "transparent" }, ticks: { color: ink } },
-      y: { stacked: stacked, beginAtZero: true, grid: { color: horizontal ? "transparent" : grid }, ticks: { color: ink } },
-    };
+  function loadPeople() {
+    return DA.api("/api/people" + DA.query({ include_inactive: "true" })).then(function (r) { return r.people; });
   }
 
-  function medianLine(values) {
-    return { type: "line", label: "Team median", data: values, borderColor: token("--text-muted"), backgroundColor: token("--text-muted"),
-             borderDash: [6, 4], borderWidth: 2, pointRadius: 0, tension: 0.2, spanGaps: false, order: 0 };
-  }
-
-  function options(stacked, horizontal) {
-    return { responsive: true, maintainAspectRatio: false, indexAxis: horizontal ? "y" : "x",
-             plugins: { legend: { display: true, labels: { color: token("--text-secondary") } }, tooltip: { enabled: true } },
-             scales: axes(stacked, horizontal) };
-  }
-
-  function lineChart(d, key, label, noData) {
-    if (!hasValues(d.series[key])) { empty(key, noData || "No data yet"); return; }
-    const colour = token("--series-1");
-    draw(key, { type: "line", data: { labels: d.dates, datasets: [
-      { label: label, data: d.series[key], borderColor: colour, backgroundColor: colour, borderWidth: 2, pointRadius: 2, tension: 0.2, spanGaps: false },
-      medianLine(d.team_median[key]),
-    ] }, options: options(false, false) });
-  }
-
-  function impactChart(d) {
-    if (!hasValues(d.series.delivery) && !hasValues(d.series.participation)) { empty("impact", "No data yet"); return; }
-    draw("impact", { type: "bar", data: { labels: d.dates, datasets: [
-      { label: "Delivery", data: d.series.delivery, backgroundColor: token("--series-1"), borderRadius: 3, stack: "impact" },
-      { label: "Participation", data: d.series.participation, backgroundColor: token("--series-3"), borderRadius: 3, stack: "impact" },
-      medianLine(d.team_median.impact),
-    ] }, options: options(true, false) });
-  }
-
-  function splitChart(d) {
-    const last = d.dates.length - 1;
-    if (last < 0 || (d.series.delivery[last] === null && d.series.participation[last] === null)) { empty("split", "No data yet"); return; }
-    draw("split", { type: "bar", data: { labels: ["Delivery", "Participation"], datasets: [
-      { label: "This person", data: [d.series.delivery[last], d.series.participation[last]], backgroundColor: token("--series-1"), borderRadius: 3 },
-      { label: "Team median", data: [d.team_median.delivery[last], d.team_median.participation[last]], backgroundColor: token("--series-2"), borderRadius: 3 },
-    ] }, options: options(false, true) });
-  }
-
-  function showSeries(d) {
-    impactChart(d);
-    lineChart(d, "impact_per_dollar", "Impact per dollar", "Waiting for Claude usage data");
-    splitChart(d);
-    lineChart(d, "delivery", "Delivery points");
-    lineChart(d, "delivery_speed", "Delivery speed (hours)");
-    lineChart(d, "durability", "Durability");
-    lineChart(d, "participation", "Participation points");
-    lineChart(d, "prs_reviewed", "PRs reviewed");
-    lineChart(d, "review_value", "Review value");
-    const notes = document.getElementById("series-notes");
-    notes.textContent = "";
-    DA.notes(notes, d.notes);
-  }
-
-  function loadSeries() {
-    const s = DA.state();
-    const params = new URLSearchParams({ window_days: document.getElementById("person-window").value });
-    if (s.team) { params.set("team", s.team); }
-    DA.api("/api/person/" + encodeURIComponent(s.id) + "/series?" + params.toString()).then(showSeries).catch(function (e) {
-      const notes = document.getElementById("series-notes");
-      DA.message(notes, e.message, "error");
+  function fillPicker(people, chosen) {
+    const picker = document.getElementById("person-picker");
+    document.getElementById("all-people").setAttribute("href", "/people" + DA.query());
+    picker.textContent = "";
+    picker.appendChild(DA.el("option", { value: "", text: "Choose a person…" }));
+    people.forEach(function (p) {
+      picker.appendChild(DA.el("option", { value: p.person_id, text: p.status === "inactive" ? p.name + " (inactive)" : p.name }));
     });
+    picker.value = chosen;
+  }
+
+  // Opening People from the nav lands here with no person: show the one viewed last, else the first by name.
+  function chooseDefault() {
+    const mount = document.getElementById("person-charts");
+    loadPeople().then(function (people) {
+      fillPicker(people, "");
+      if (!people.length) { DA.message(mount, "No people yet. Add a team and run a sync first."); return; }
+      const last = remembered();
+      const known = people.some(function (p) { return p.person_id === last; });
+      window.location.replace("/person" + DA.query({ id: known ? last : people[0].person_id }));
+    }).catch(function (e) { DA.message(mount, e.message, "error"); });
   }
 
   document.addEventListener("DOMContentLoaded", function () {
-    document.getElementById("person-window").addEventListener("change", function () { if (DA.state().id) { loadSeries(); } });
+    PersonCharts.mount(document.getElementById("person-charts"));
+    document.getElementById("person-picker").addEventListener("change", function (event) {
+      if (event.target.value) {
+        remember(event.target.value);
+        window.location.assign("/person" + DA.query({ id: event.target.value }));
+      }
+    });
   });
 
   function day(iso) { return iso ? iso.slice(0, 10) : "–"; }
 
   DA.page(function render() {
     const s = DA.state();
-    if (!s.id) { DA.message(document.getElementById("series-notes"), "Open a person from Rankings."); return; }
+    if (!s.id) { chooseDefault(); return; }
+    remember(s.id);
+    loadPeople().then(function (people) { fillPicker(people, s.id); }).catch(function () { /* the page works without the list */ });
     DA.api("/api/people/" + encodeURIComponent(s.id) + DA.query()).then(function (d) {
       document.getElementById("person-name").textContent = d.person.name;
       document.getElementById("person-identities").textContent =
@@ -168,7 +119,7 @@
       DA.notes(tickets, t.notes);
     }).catch(function (e) { DA.message(tickets, e.message, "error"); });
 
-    loadSeries();
+    PersonCharts.load(s.id);
     tiles(document.getElementById("person-stats"), STATS, s.id);
   });
 })();

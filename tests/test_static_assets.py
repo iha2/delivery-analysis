@@ -178,10 +178,31 @@ def test_people_page_has_the_expected_ids_and_scripts():
             "work behind the numbers.") in html
 
 
-def test_every_nav_has_the_people_link_right_after_rankings():
+NAV = (
+    '<a href="/">Dashboard</a>\n    <a href="/person">People</a>\n    <a href="/rankings">Rankings</a>\n'
+    '    <a href="/ask">Ask</a>\n    <h2 class="nav-group">Set up</h2>\n    <a href="/selection">Selection</a>\n'
+    '    <a href="/teams">Teams</a>\n    <a href="/sources">Sources</a>\n    <a href="/settings">Settings</a>'
+)
+
+
+def test_every_nav_leads_with_the_analysis_pages_and_groups_the_setup_pages():
     for page in PAGE_FILES:
-        html = page.read_text(encoding="utf-8")
-        assert '<a href="/rankings">Rankings</a>\n    <a href="/people">People</a>' in html, page.name
+        assert NAV in page.read_text(encoding="utf-8"), page.name
+
+
+def test_the_person_page_lights_up_people_in_the_nav():
+    script = read("app.js")
+    assert 'base === "/person" && window.location.pathname === "/people"' in script  # the matrix is part of People
+    assert 'base === "/rankings"' not in script
+
+
+def test_the_person_page_has_a_dropdown_to_change_the_person():
+    html, script, css = read("person.html"), read("pages", "person.js"), read("style.css")
+    assert 'for="person-picker">Person</label>' in html and 'id="person-picker"' in html
+    assert 'href="/people"' in html.split('id="person-picker"')[1].split("</div>")[0]  # a way back to everyone
+    assert '"/api/people"' in script and "person-picker" in script
+    assert '"/person" + DA.query({ id:' in script  # picking someone opens their page, keeping team and window
+    assert ".nav-group" in css
 
 
 def test_people_js_reads_only_fields_from_the_contract():
@@ -234,21 +255,56 @@ PERSON_CHARTS = ["impact", "impact_per_dollar", "split", "delivery", "delivery_s
                  "participation", "prs_reviewed", "review_value"]
 
 
-def test_person_page_uses_the_series_endpoint_and_has_a_canvas_per_chart():
+def test_person_page_loads_the_shared_chart_script_into_a_mount_point():
     html, script = read("person.html"), read("pages", "person.js")
-    assert '"/api/person/"' in script and "/series?" in script
+    assert 'id="person-charts"' in html
+    assert html.index("/static/charts.js") < html.index("/static/person-charts.js") < html.index("/static/pages/person.js")
+    assert "PersonCharts.mount(" in script and "PersonCharts.load(" in script
+    assert "new window.Chart" not in script and "borderDash" not in script  # chart code lives only in person-charts.js
+    assert "<summary>Show the tickets and PRs</summary>" in html and 'id="person-top"' not in html
+
+
+def test_person_charts_script_builds_a_canvas_per_chart_and_the_controls():
+    script = read("person-charts.js")
+    assert "window.PersonCharts" in script
+    for name in ("mount", "load", "clear", "csvUrl"):
+        assert f"{name}: {name}" in script
     for key in PERSON_CHARTS:
-        assert f'<canvas id="chart-{key}"' in html and f'id="empty-{key}"' in html
-    assert 'id="person-window"' in html and "window_days" in script
-    assert 'id="person-top"' not in html
-    assert "<summary>Show the tickets and PRs</summary>" in html
+        assert f'"{key}"' in script, key
+    assert '"chart-" + key' in script and '"empty-" + key' in script
+    assert '"/api/person/"' in script and "/series?" in script
+    assert 'id: "person-window"' in script and "window_days" in script
+    assert "Loading…" in script
+    assert "Download CSV" in script and 'id: "download-csv"' in script and "export.csv" in script
     assert "Waiting for Claude usage data" in script and "No data yet" in script
     assert "borderDash" in script  # the team median is dashed
-    assert "fan-in" not in html.lower()
+    assert "fan-in" not in script.lower()
 
 
-def test_person_page_has_a_title_and_one_caption_per_chart():
-    html = read("person.html")
-    cards = re.findall(r'<section class="card">\s*<h3>([^<]+)</h3>\s*<p class="subtitle">([^<]+)</p>\s*<div class="chart', html)
-    assert len(cards) == len(PERSON_CHARTS)
-    assert all(title.strip() and caption.strip().endswith(".") for title, caption in cards)
+def test_person_charts_script_has_a_title_and_one_caption_per_chart():
+    script = read("person-charts.js")
+    cards = re.findall(r'\["([a-z_]+)", "([^"]+)", "([^"]+)"\]', script[: script.index("const KEYS")])
+    assert [key for key, _, _ in cards] == PERSON_CHARTS
+    assert all(title.strip() and caption.strip().endswith(".") for _, title, caption in cards)
+
+
+def test_person_charts_script_applies_the_team_choice_as_soon_as_a_box_is_ticked():
+    script, css = read("person-charts.js"), read("style.css")
+    assert '"/api/teams/"' in script and "/comparison" in script and 'method: "PUT"' in script
+    assert 'id: "compare-group"' in script and 'type: "checkbox"' in script
+    assert 'addEventListener("change"' in script and "setTimeout(" in script  # applies on tick, debounced
+    assert "Updating the median in a moment" in script  # feedback while the pause runs
+    assert "GROUP_DELAY_MS = 1000" in script and "}, GROUP_DELAY_MS);" in script  # one update per second at most
+    for label in ("Select all", "Clear", "Who counts as the team?"):
+        assert label in script, label
+    assert '"Save"' not in script and "Use the whole team" not in script  # nothing to remember to click
+    assert "person_ids: ids" in script and "ids.length === all.length ? null : ids" in script  # all ticked: whole team
+    assert "Everyone's median" in script and "Selected people's median" in script
+    assert ".compare-group" in css and ".compare-people" in css
+
+
+def test_people_in_the_nav_opens_the_person_view_on_someone_by_default():
+    script, html = read("pages", "person.js"), read("person.html")
+    assert 'window.location.replace("/person" + DA.query({ id:' in script  # no id: jump to a person
+    assert "localStorage" in script and "da.person" in script  # the last person viewed comes first
+    assert 'id="all-people" href="/people"' in html  # the matrix is one click away

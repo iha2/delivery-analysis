@@ -131,3 +131,22 @@ def test_without_a_team_sum_metric_median_counts_people_without_a_row_as_zero(se
     ratio = [r["value"] for r in run_metric(seeded, BY_NAME["delivery_speed"], Scope(), make_window("30d", TZ, END), people)["rows"]
              if r["value"] is not None]
     assert out["team_median"]["delivery_speed"] == [pytest.approx(statistics.median(ratio))]
+
+
+def test_the_median_covers_only_the_chosen_comparison_group(seeded):
+    scope = team_scope(seeded, "t1")
+    chosen = sorted(scope.members)[0]
+    out = person_series(seeded, chosen, scope, end=END, window_days=30, step_days=30, history_days=0, tz=TZ,
+                        group=[chosen])
+    assert out["team_median"]["impact"] == out["series"]["impact"]  # a group of one is that person
+    assert out["comparison"] == {"custom": True, "size": 1}
+    default = person_series(seeded, chosen, scope, end=END, window_days=30, step_days=30, history_days=0, tz=TZ)
+    assert default["comparison"] == {"custom": False, "size": len(scope.members)}
+
+
+def test_a_group_with_nobody_in_the_team_falls_back_to_the_whole_team(seeded):
+    scope = team_scope(seeded, "t1")
+    chosen = sorted(scope.members)[0]
+    out = person_series(seeded, chosen, scope, end=END, window_days=30, step_days=30, history_days=0, tz=TZ,
+                        group=["someone-else"])
+    assert out["comparison"] == {"custom": False, "size": len(scope.members)}

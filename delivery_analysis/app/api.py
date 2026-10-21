@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import re
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterator, List, Optional
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Response
 from pydantic import BaseModel, Field
 
 from delivery_analysis.app.context import AppContext
@@ -14,6 +15,7 @@ from delivery_analysis.connectors.bitbucket.client import BitbucketClient, Bitbu
 from delivery_analysis.connectors.bitbucket.resolve import resolve_repository
 from delivery_analysis.connectors.registry import build_connectors
 from delivery_analysis.metrics.catalog import BY_NAME, METRICS
+from delivery_analysis.metrics.export import person_csv
 from delivery_analysis.metrics.matrix import people_matrix
 from delivery_analysis.metrics.people import (
     People, map_identity, set_member_status, team_scope, unmapped_accounts,
@@ -24,6 +26,7 @@ from delivery_analysis.metrics.series import person_series
 from delivery_analysis.metrics.tickets import ticket_costs
 from delivery_analysis.metrics.window import ISO_Z, Window, make_window
 from delivery_analysis.settings import CONFIG_VARS, CREDENTIAL_VARS, credential_status
+from delivery_analysis.store import comparison
 from delivery_analysis.store.db import connect
 from delivery_analysis.store.repo_selection import (
     add_repo, detail_progress, list_selected, remove_repo, resolve as resolve_selected,
@@ -43,6 +46,10 @@ class TeamIn(BaseModel):
 
 class MemberIn(BaseModel):
     status: str
+
+
+class ComparisonIn(BaseModel):
+    person_ids: Optional[List[str]] = None  # None resets to the whole active team
 
 
 class IdentityIn(BaseModel):
@@ -267,6 +274,22 @@ def build_router(ctx: AppContext) -> APIRouter:
             except ValueError as exc:
                 raise _fail(ctx, 400, exc)
 
+    @router.get("/people")
+    def people_list(team: Optional[str] = None, include_inactive: bool = False) -> Dict[str, Any]:
+        """Who can be put in focus: a team's members by name, or everyone not excluded when no team is chosen."""
+        with _db(ctx) as conn:
+            try:
+                scope = team_scope(conn, team, include_inactive)
+            except LookupError as exc:
+                raise _fail(ctx, 404, exc)
+            people = People(conn)
+            if scope.members is None:
+                rows = [{"person_id": row["person_id"], "name": row["name"], "status": None} for row in people.all()]
+            else:
+                rows = [{"person_id": person, "name": people.name(person), "status": status}
+                        for person, status in scope.members.items()]
+            return {"people": sorted(rows, key=lambda row: row["name"].lower())}
+
     @router.get("/people/{person_id}")
     def person(
         person_id: str,
@@ -306,9 +329,44 @@ def build_router(ctx: AppContext) -> APIRouter:
                 return person_series(
                     conn, person_id, scope, end=ctx.today(), window_days=window_days, step_days=step_days,
                     history_days=history_days, tz=ctx.settings.report_tz,
+                    group=comparison.get_group(conn, team) if team else None,
                 )
             except LookupError as exc:
                 raise _fail(ctx, 404, exc)
+
+    @router.get("/people/{person_id}/export.csv")
+    def person_export(
+        person_id: str,
+        team: Optional[str] = None,
+        window: Optional[str] = None,
+        start: Optional[str] = Query(None, alias="from"),
+        end: Optional[str] = Query(None, alias="to"),
+        section: str = "all",
+        window_days: int = 30,
+    ) -> Response:
+        if not 7 <= window_days <= 365:
+            raise HTTPException(status_code=400, detail="window_days must be between 7 and 365.")
+        with _db(ctx) as conn:
+            try:
+                scope = team_scope(conn, team)
+                row = conn.execute("SELECT display_name FROM person WHERE person_id = ?", (person_id,)).fetchone()
+                if row is None:
+                    raise LookupError(f"No person with id {person_id!r}.")
+                win = _window(ctx, conn, team, window, start, end)
+                body = person_csv(
+                    conn, person_id, scope, win, section=section, series_end=ctx.today(),
+                    window_days=window_days, tz=ctx.settings.report_tz, history_days=ctx.settings.window_days,
+                )
+            except LookupError as exc:
+                raise _fail(ctx, 404, exc)
+            except ValueError as exc:
+                raise _fail(ctx, 400, exc)
+        slug = lambda text: re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")  # noqa: E731
+        filename = f"{slug(row['display_name']) or 'person'}-metrics-{slug(win.to_json()['label']) or 'window'}.csv"
+        return Response(
+            content=b"\xef\xbb\xbf" + body.encode("utf-8"), media_type="text/csv; charset=utf-8",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
 
     @router.get("/tickets")
     def tickets(
@@ -353,6 +411,28 @@ def build_router(ctx: AppContext) -> APIRouter:
                 now = utc_now_iso()
                 team_id = create_team(conn, body.name.strip(), repos, body.window_days, now=now)
                 return {"team_id": team_id, "summary": reconcile_team(conn, team_id, now).summary()}
+            except ValueError as exc:
+                raise _fail(ctx, 400, exc)
+
+    @router.get("/teams/{team_id}/comparison")
+    def comparison_group(team_id: str) -> Dict[str, Any]:
+        with _db(ctx) as conn:
+            try:
+                return comparison.options(conn, team_id)
+            except LookupError as exc:
+                raise _fail(ctx, 404, exc)
+
+    @router.put("/teams/{team_id}/comparison")
+    def set_comparison_group(team_id: str, body: ComparisonIn) -> Dict[str, Any]:
+        with _db(ctx) as conn:
+            try:
+                if body.person_ids is None:
+                    comparison.reset_group(conn, team_id)
+                else:
+                    comparison.set_group(conn, team_id, body.person_ids)
+                return comparison.options(conn, team_id)
+            except LookupError as exc:
+                raise _fail(ctx, 404, exc)
             except ValueError as exc:
                 raise _fail(ctx, 400, exc)
 

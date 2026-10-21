@@ -11,7 +11,7 @@ NOW = "2026-10-15T00:00:00Z"
 def test_migration_four_creates_the_tables(conn):
     names = {row["name"] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     assert {"project_selection", "status_mapping"} <= names
-    assert db.current_version(conn) == 6
+    assert db.current_version(conn) == 7
 
 
 def test_add_is_an_upsert_and_keeps_a_chosen_points_field(conn):

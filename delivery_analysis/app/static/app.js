@@ -154,7 +154,7 @@
       const base = link.getAttribute("data-base") || link.getAttribute("href").split("?")[0];
       link.setAttribute("data-base", base);
       link.setAttribute("href", base + query);
-      const here = window.location.pathname === base || (base === "/rankings" && window.location.pathname === "/person");
+      const here = window.location.pathname === base || (base === "/person" && window.location.pathname === "/people");
       link.classList.toggle("active", here);
     });
   }
