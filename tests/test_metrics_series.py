@@ -150,3 +150,28 @@ def test_a_group_with_nobody_in_the_team_falls_back_to_the_whole_team(seeded):
     out = person_series(seeded, chosen, scope, end=END, window_days=30, step_days=30, history_days=0, tz=TZ,
                         group=["someone-else"])
     assert out["comparison"] == {"custom": False, "size": len(scope.members)}
+
+
+def test_summary_is_the_last_window(seeded):
+    from test_metrics_impact_model import add_cost
+    scope = team_scope(seeded, "t1")
+    add_cost(seeded, "ann@corp.example", 30.0, day="2026-09-10")
+    out = person_series(seeded, "p-ann", scope, end=END, window_days=30, step_days=7, history_days=28, tz=TZ)
+    cost = run_metric(seeded, BY_NAME["cost_spent"], scope, make_window("30d", TZ, END), People(seeded))
+    ann = next(r["value"] for r in cost["rows"] if r["person_id"] == "p-ann")
+    s = out["summary"]
+    assert s == {
+        "window_days": 30, "start": "2026-08-22", "end": "2026-09-20", "impact": out["series"]["impact"][-1],
+        "claude_cost": ann, "impact_per_dollar": out["series"]["impact_per_dollar"][-1],
+        "team_median_impact_per_dollar": out["team_median"]["impact_per_dollar"][-1],
+    }
+    assert s["claude_cost"] == 30.0 and s["impact"] == pytest.approx(13.95)
+    assert s["impact_per_dollar"] == pytest.approx(13.95 / 30.0, abs=1e-3)
+    bob = person_series(seeded, "p-bob", scope, end=END, window_days=30, step_days=30, history_days=0, tz=TZ)
+    assert bob["summary"]["claude_cost"] == 0.0 and bob["summary"]["impact_per_dollar"] is None
+
+
+def test_summary_cost_is_none_when_claude_usage_is_not_synced(seeded):
+    out = person_series(seeded, "p-ann", team_scope(seeded, "t1"), end=END, window_days=30, step_days=30,
+                        history_days=0, tz=TZ)
+    assert out["summary"]["claude_cost"] is None and out["summary"]["impact_per_dollar"] is None

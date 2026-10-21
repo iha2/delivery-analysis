@@ -34,7 +34,13 @@
 
   const GROUPS = [["impact", "Impact"], ["delivery", "Delivery"], ["participation", "Participation"]];
 
-  function groupOf(col) { return col.group || ""; }
+  // The API names each column's group; this map only covers an older API that does not.
+  const FALLBACK_GROUP = { "impact_points": "impact", "impact_per_dollar": "impact", "cost_spent": "impact",
+    "delivery_points": "delivery", "delivery_speed": "delivery", "durability": "delivery",
+    "participation_points": "participation", "prs_reviewed": "participation", "review_value": "participation",
+    "review_responsiveness": "participation" };
+
+  function groupOf(col) { return col.group || FALLBACK_GROUP[col.name] || ""; }
 
   function startsGroup(shown, i) { return i === 0 || groupOf(shown[i - 1]) !== groupOf(shown[i]); }
 
@@ -82,10 +88,13 @@
       const cells = shown.map(function (col, i) {
         const cell = row.cells[col.name];
         if (!cell) { return DA.el("td", { class: cellClass(shown, i), text: "–" }); }
+        // A reason explains a blank or unranked cell, so it reads as explained rather than broken.
+        const blank = cell.value === null || cell.value === undefined;
+        const sample = cell.sample === null || cell.sample === undefined ? null : "sample " + cell.sample;
         return DA.el("td", {
-          class: cellClass(shown, i) + (cell.ranked ? "" : " unranked"),
-          title: cell.sample === null || cell.sample === undefined ? null : "sample " + cell.sample,
-          text: DA.fmt(cell.value, col.unit),
+          class: cellClass(shown, i) + (cell.ranked ? "" : " unranked") + (cell.reason ? " cell-reason" : ""),
+          title: cell.reason || sample,
+          text: blank ? "–" : DA.fmt(cell.value, col.unit),
         });
       });
       return DA.el("tr", {}, [DA.el("td", { class: "sticky-col" }, [person])].concat(cells));

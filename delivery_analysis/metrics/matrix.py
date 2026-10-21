@@ -3,7 +3,7 @@ from __future__ import annotations
 import sqlite3
 from typing import Any, Dict, List, Optional
 
-from delivery_analysis.metrics.catalog import METRICS
+from delivery_analysis.metrics.catalog import BY_NAME, METRICS
 from delivery_analysis.metrics.people import People, Scope
 from delivery_analysis.metrics.registry import PER_PERSON, run_metric
 from delivery_analysis.metrics.window import Window
@@ -16,11 +16,16 @@ GROUP_ORDER = ("impact", "delivery", "participation")
 
 def _matrix_metrics():
     """Per-person metrics of the impact model's groups, grouped in order, then in catalog order."""
-    return [m for group in GROUP_ORDER for m in METRICS if m.kind == PER_PERSON and m.group == group]
+    out = [m for group in GROUP_ORDER for m in METRICS if m.kind == PER_PERSON and m.group == group]
+    # The ratio's denominator sits right beside it; cost_spent keeps its own (activity) group in the catalog.
+    at = next(i for i, m in enumerate(out) if m.name == "impact_per_dollar") + 1
+    out.insert(at, BY_NAME["cost_spent"])
+    return out
 
 
 def _cell(row: Dict[str, Any]) -> Dict[str, Any]:
-    return {key: row.get(key) for key in ("value", "sample", "ranked", "rank", "confidence")}
+    cell = {key: row.get(key) for key in ("value", "sample", "ranked", "rank", "confidence")}
+    return {**cell, "reason": row.get("unranked_reason")}
 
 
 def people_matrix(
@@ -39,7 +44,7 @@ def people_matrix(
         columns.append({
             "name": metric.name, "label": result["label"], "unit": result["unit"], "better": result["better"],
             "description": result["description"], "needs": result["needs"], "status": result["status"],
-            "missing": result["missing"],
+            "missing": result["missing"], "group": "impact" if metric.name == "cost_spent" else metric.group,
         })
         for source in result["missing"]:
             waiting[source] = waiting.get(source, 0) + 1

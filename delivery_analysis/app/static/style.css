@@ -81,6 +81,11 @@ th, td { text-align: left; padding: .35rem .5rem; border-bottom: 1px solid var(-
 th { color: var(--text-secondary); font-weight: 600; }
 td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 tr.unranked td { color: var(--text-muted); }
+td.cell-reason { color: var(--text-muted); font-style: italic; cursor: help; text-decoration: underline dotted var(--border-strong); text-underline-offset: .2em; }
+.series-summary { margin: .25rem 0 1rem; padding: .6rem .8rem; background: var(--surface-1); border: 1px solid var(--border); border-radius: .4rem; }
+.series-summary p { margin: 0; }
+.series-summary .figure { font-weight: 600; font-variant-numeric: tabular-nums; }
+.series-summary .explain { margin-top: .3rem; color: var(--text-secondary); font-size: .85rem; }
 .good { color: var(--good); }
 .bad { color: var(--bad); }
 details { margin-top: .5rem; }

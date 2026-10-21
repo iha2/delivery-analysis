@@ -100,6 +100,46 @@
     ] }, options: options(false, true) });
   }
 
+  // claude_cost is null until Claude usage has synced, 0 when it synced but none is linked to this person.
+  function costState(summary) {
+    if (!summary || summary.claude_cost === null || summary.claude_cost === undefined) { return "waiting"; }
+    return summary.claude_cost === 0 ? "unlinked" : "linked";
+  }
+
+  function noCostText() {
+    return "No Claude cost is linked to this person yet, so Impact per dollar is blank. If they use Claude, link their Claude email on the ";
+  }
+
+  function unlinkedNote() {
+    return [noCostText(), DA.el("a", { href: "/teams", text: "Teams screen" }), "."];
+  }
+
+  function showSummary(d) {
+    const box = document.getElementById("series-summary");
+    if (!box) { return; }
+    box.textContent = "";
+    const s = d.summary;
+    if (!s) { box.classList.add("hidden"); return; }
+    box.classList.remove("hidden");
+    const state = costState(s);
+    const figure = function (text) { return DA.el("span", { class: "figure", text: text }); };
+    const parts = ["Last " + s.window_days + " days: Impact ", figure(DA.fmt(s.impact)), " · Claude cost ",
+                   figure(state === "waiting" ? "–" : DA.fmt(s.claude_cost, "usd"))];
+    if (state === "linked") {
+      parts.push(" · ", figure(DA.fmt(s.impact_per_dollar, "points_per_usd")), " impact per dollar (team median ",
+                 DA.fmt(s.team_median_impact_per_dollar, "points_per_usd"), ")");
+    }
+    box.appendChild(DA.el("p", {}, parts));
+    if (state === "unlinked") { box.appendChild(DA.el("p", { class: "explain" }, unlinkedNote())); }
+    if (state === "waiting") { box.appendChild(DA.el("p", { class: "explain", text: "Waiting for Claude usage data." })); }
+  }
+
+  function perDollarEmpty(d) {
+    const state = costState(d.summary);
+    return state === "unlinked" ? "No Claude cost is linked to this person yet, so Impact per dollar is blank. Link their Claude email on the Teams screen."
+                                : "Waiting for Claude usage data.";
+  }
+
   function nameMedian(d) {
     if (!DA.state().team) { return "Everyone's median"; }
     return d.comparison && d.comparison.custom ? "Selected people's median" : "Team median";
@@ -108,7 +148,8 @@
   function showSeries(d) {
     medianName = nameMedian(d);
     impactChart(d);
-    lineChart(d, "impact_per_dollar", "Impact per dollar", "Waiting for Claude usage data");
+    showSummary(d);
+    lineChart(d, "impact_per_dollar", "Impact per dollar", perDollarEmpty(d));
     splitChart(d);
     lineChart(d, "delivery", "Delivery points");
     lineChart(d, "delivery_speed", "Delivery speed (hours)");
@@ -244,6 +285,7 @@
       DA.el("span", { class: "note", text: "Each point covers the days up to its date; the dashed line is the median of the people counted as the team." }),
       DA.el("a", { id: "download-csv", class: "button", download: true, text: "Download CSV" }),
     ]));
+    container.appendChild(DA.el("div", { id: "series-summary", class: "series-summary hidden" }));
     container.appendChild(groupPanel());
     ROWS.forEach(function (row) {
       container.appendChild(DA.el("div", { class: "chart-row " + row[0] }, row[1].map(card)));
@@ -259,6 +301,8 @@
     const mine = sequence;
     setLink(id);
     KEYS.forEach(function (key) { empty(key, "Loading…"); });
+    const strip = document.getElementById("series-summary");
+    if (strip) { strip.classList.remove("hidden"); strip.textContent = "Loading…"; }
     const notes = document.getElementById("series-notes");
     notes.textContent = "";
     const s = DA.state();
@@ -273,6 +317,7 @@
         const note = document.getElementById("empty-" + key);
         if (note.textContent === "Loading…") { note.textContent = ""; note.classList.add("hidden"); }
       });
+      if (strip) { strip.textContent = ""; strip.classList.add("hidden"); }
       DA.message(notes, e.message, "error");
     });
   }

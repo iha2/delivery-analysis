@@ -65,6 +65,8 @@ class Metric:
     min_denominator: float = 0.0
     sample_noun: str = "items"
     group: str = "activity"
+    denominator_noun: str = "Claude cost"
+    no_denominator_reason: Optional[str] = None
 
 
 def missing_sources(conn: sqlite3.Connection, metric: Metric) -> List[str]:
@@ -267,10 +269,12 @@ def _per_person_ratio(conn, metric: Metric, scope: Scope, window: Window, people
                 thin = True
         trend = (value - prior) / prior if value is not None and prior else None
         reason = unranked.get(person_id)
+        if reason is None and metric.no_denominator_reason and den <= 0:
+            reason = metric.no_denominator_reason
         if reason is None and n < metric.min_sample:
             reason = f"fewer than {metric.min_sample} {metric.sample_noun}"
         if reason is None and den < metric.min_denominator:
-            reason = f"under ${metric.min_denominator:.0f} of attributed Claude cost"
+            reason = f"under ${metric.min_denominator:.0f} of {metric.denominator_noun}"
         if reason is None and value is None:
             reason = "no cost to divide by"
         rows.append({

@@ -153,3 +153,44 @@ def test_a_second_linked_account_of_the_author_earns_no_review_credit(conn):
     value = by_person(run_metric(conn, BY_NAME["review_value"], Scope(), WINDOW))
     assert "Ann Example" not in reviewed or reviewed["Ann Example"]["value"] == 0.0
     assert "Ann Example" not in value or value["Ann Example"]["value"] == 0.0
+
+
+def add_cost(conn, email, cost, day="2026-09-03"):
+    conn.execute(
+        "INSERT INTO claude_usage_day (source, day, actor_type, actor, model, cost_usd, input_tokens, "
+        "output_tokens, cache_read_tokens, cache_creation_tokens, fetched_at) "
+        "VALUES ('claude_code_analytics', ?, 'email', ?, 'm', ?, 1, 0, 0, 0, ?)", (day, email, cost, NOW))
+
+
+NO_COST = ("{n} of {m} people have no Claude cost linked, so Impact per dollar is blank for them (no Claude seat, "
+           "or their Claude email is not linked to them: link it on the Teams screen).")
+
+
+def test_impact_per_dollar_reasons_for_missing_and_thin_cost(conn):
+    seed_model(conn)
+    add_cost(conn, "ann@corp.example", 5.0)
+    from dataclasses import replace
+    metric = replace(BY_NAME["impact_per_dollar"], min_sample=1)  # Ann and Bob each have 2 tickets in the seed
+    rows = by_person(run_metric(conn, metric, team_scope(conn, "t1"), WINDOW))
+    assert rows["Ann Example"]["unranked_reason"] == "under $20 of Claude cost"
+    assert rows["Bob Builder"]["unranked_reason"] == "no Claude cost linked to this person"
+
+
+def test_the_no_cost_note_counts_members_with_impact_and_no_cost(conn):
+    seed_model(conn)
+    add_cost(conn, "ann@corp.example", 30.0)
+    result = run_metric(conn, BY_NAME["impact_per_dollar"], team_scope(conn, "t1"), WINDOW)
+    assert result["notes"].count(NO_COST.format(n=1, m=2)) == 1
+    assert len(result["notes"]) == len(set(result["notes"]))
+
+
+def test_no_note_when_every_member_has_cost_or_no_team_scope(conn):
+    seed_model(conn)
+    add_cost(conn, "ann@corp.example", 30.0)
+    add_cost(conn, "bob@corp.example", 30.0)
+    full = run_metric(conn, BY_NAME["impact_per_dollar"], team_scope(conn, "t1"), WINDOW)
+    assert not any("no Claude cost linked" in note for note in full["notes"])
+    from delivery_analysis.metrics.impact_model import impact_per_dollar
+    conn.execute("DELETE FROM claude_usage_day WHERE actor = 'bob@corp.example'")
+    unscoped = impact_per_dollar(conn, Scope(), WINDOW)
+    assert not any("no Claude cost linked" in note for note in unscoped.notes)

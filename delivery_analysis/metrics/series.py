@@ -91,8 +91,18 @@ def person_series(
                 totals[person] += penalty
         series["penalty"].append(round(totals.get(person_id, 0.0), 2) if impact_ok else None)
         medians["penalty"].append(_median(list(totals.values())) if impact_ok and totals else None)
+    cost = run_metric(conn, replace(BY_NAME["cost_spent"], windowed=False), scope, windows[-1], people)
+    claude_cost: Optional[float] = None
+    if cost["status"] == "ok":
+        claude_cost = next((row["value"] for row in cost["rows"] if row["person_id"] == person_id), None) or 0.0
+    summary = {
+        "window_days": window_days, "start": windows[-1].first_day.isoformat(), "end": days[-1].isoformat(),
+        "impact": series["impact"][-1], "claude_cost": claude_cost,
+        "impact_per_dollar": series["impact_per_dollar"][-1],
+        "team_median_impact_per_dollar": medians["impact_per_dollar"][-1],
+    }
     return {
         "dates": [day.isoformat() for day in days], "window_days": window_days,
-        "series": series, "team_median": medians, "notes": notes,
+        "series": series, "team_median": medians, "notes": notes, "summary": summary,
         "comparison": {"custom": bool(chosen), "size": len(members)},
     }

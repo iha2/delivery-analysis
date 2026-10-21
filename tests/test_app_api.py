@@ -183,6 +183,11 @@ def test_person_series_returns_the_rolling_series(tmp_path):
     }
     assert all(len(values) == 3 for values in body["series"].values())
     assert body["series"]["prs_reviewed"][0] == 0
+    summary = body["summary"]
+    assert (summary["window_days"], summary["end"], summary["start"]) == (30, "2026-10-15", "2026-09-16")
+    assert summary["impact"] == body["series"]["impact"][-1]
+    assert set(summary) == {"window_days", "start", "end", "impact", "claude_cost", "impact_per_dollar",
+                            "team_median_impact_per_dollar"}
 
 
 def test_person_series_defaults_and_no_team(tmp_path):

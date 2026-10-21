@@ -96,7 +96,28 @@ def impact_per_dollar(conn, scope: Scope, window: Window) -> Observations:
     for key, values in cost.by_actor.items():
         ratio.add_pair(key, 0.0, sum(values), 0)
     ratio.notes.extend(note for note in cost.notes if note not in ratio.notes)
+    note = _no_cost_note(conn, scope, obs, cost)
+    if note and note not in ratio.notes:
+        ratio.notes.append(note)
     return ratio
+
+
+NO_COST_NOTE = (
+    "{n} of {m} people have no Claude cost linked, so Impact per dollar is blank for them (no Claude seat, "
+    "or their Claude email is not linked to them: link it on the Teams screen)."
+)
+
+
+def _no_cost_note(conn, scope: Scope, impact: Observations, cost: Observations) -> Optional[str]:
+    """Team scopes only: how many members with impact in the window have no Claude cost linked."""
+    if scope.members is None:
+        return None
+    people = People(conn)
+    earning = {people.resolve(key) for key in impact.by_actor}
+    earning.discard(None)
+    paid = {people.resolve(key) for key, values in cost.by_actor.items() if sum(values) > 0}
+    missing = len(earning - paid)
+    return NO_COST_NOTE.format(n=missing, m=len(earning)) if missing else None
 
 
 def delivery_speed(conn, scope: Scope, window: Window) -> Observations:

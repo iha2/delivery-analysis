@@ -48,7 +48,8 @@ def test_ratio_of_sums_minimums_trend_and_confidence(conn):
 def test_the_cost_floor_and_thin_history(conn):
     seed(conn)
     data = {SEPT_WINDOW.start: {"person:p-ann": [(3, 5), (2, 5), (5, 5)]}, AUG_START: {"person:p-ann": [(1, 10)]}}
-    result = r.run_metric(conn, metric(pairs(data)), team_scope(conn, "t1"), SEPT_WINDOW)
+    result = r.run_metric(conn, metric(pairs(data), denominator_noun="attributed Claude cost"),
+                          team_scope(conn, "t1"), SEPT_WINDOW)
     ann = result["rows"][0]
     assert ann["ranked"] is False and ann["unranked_reason"] == "under $20 of attributed Claude cost"
     assert ann["previous"] is None and any("insufficient history" in note for note in result["notes"])

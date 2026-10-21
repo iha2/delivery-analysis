@@ -170,3 +170,51 @@ def test_cost_spent_is_not_waiting_when_only_claude_usage_days_exist(conn):
         "VALUES ('claude_code_analytics', '2026-03-02', 'claude_api_key', 'key-1', 'm', 1.0, 1, 0, 0, 0, "
         "'2026-03-21T00:00:00Z')")
     assert missing_sources(conn, BY_NAME["cost_spent"]) == []
+
+
+def _pairs(data):
+    def compute(conn, scope, window):
+        obs = r.Observations()
+        for key, items in data.items():
+            for item in items:
+                obs.add_pair(key, *item)
+        return obs
+    return compute
+
+
+def _ratio_metric(data, **kwargs):
+    return r.Metric("m", "M", "points_per_usd", r.PER_PERSON, ("bitbucket",), aggregate="ratio", min_sample=3,
+                    min_denominator=20.0, sample_noun="completed tickets", compute=_pairs(data), **kwargs)
+
+
+def test_no_denominator_reason_applies_to_zero_cost_only_when_declared(conn):
+    seed(conn)
+    data = {"person:p-ann": [(1, 0), (1, 0), (1, 0)], "person:p-bob": [(1, 5), (1, 0), (1, 0)]}
+    plain = r.run_metric(conn, _ratio_metric(data), team_scope(conn, "t1"), SEPT_WINDOW)["rows"]
+    ann = next(row for row in plain if row["name"] == "Ann Example")
+    assert ann["unranked_reason"] == "under $20 of Claude cost"  # undeclared: old behaviour
+    declared = _ratio_metric(data, no_denominator_reason="no Claude cost linked to this person")
+    rows = {row["name"]: row for row in r.run_metric(conn, declared, team_scope(conn, "t1"), SEPT_WINDOW)["rows"]}
+    assert rows["Ann Example"]["unranked_reason"] == "no Claude cost linked to this person"
+    assert rows["Bob Builder"]["unranked_reason"] == "under $20 of Claude cost"  # $5 of cost
+
+
+def test_member_with_no_observations_gets_the_no_cost_reason(conn):
+    seed(conn)
+    declared = _ratio_metric({}, no_denominator_reason="no Claude cost linked to this person")
+    rows = r.run_metric(conn, declared, team_scope(conn, "t1"), SEPT_WINDOW)["rows"]
+    assert all(row["unranked_reason"] == "no Claude cost linked to this person" for row in rows)
+
+
+def test_the_denominator_noun_and_catalog_wording(conn):
+    from delivery_analysis.metrics.catalog import BY_NAME
+    seed(conn)
+    data = {"person:p-ann": [(1, 5), (1, 5), (1, 5)]}
+    rows = r.run_metric(conn, _ratio_metric(data, denominator_noun="attributed Claude cost"),
+                        team_scope(conn, "t1"), SEPT_WINDOW)["rows"]
+    assert rows[0]["unranked_reason"] == "under $20 of attributed Claude cost"
+    for name in ("story_points_per_dollar", "story_points_per_dollar_all_in", "story_points_per_dollar_weekly"):
+        assert BY_NAME[name].denominator_noun == "attributed Claude cost"
+        assert BY_NAME[name].no_denominator_reason is None
+    ipd = BY_NAME["impact_per_dollar"]
+    assert ipd.denominator_noun == "Claude cost" and ipd.no_denominator_reason == "no Claude cost linked to this person"

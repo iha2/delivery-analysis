@@ -210,7 +210,7 @@ def test_people_js_reads_only_fields_from_the_contract():
     assert '"/api/people-matrix"' in script and "DA.page(" in script
     allowed = {"window", "columns", "rows", "notes", "person_id", "name", "cells", "label", "unit", "better",
                "description", "needs", "status", "missing", "value", "sample", "ranked", "rank", "confidence",
-               "start", "end", "days", "length", "sort", "dir", "inactive", "id", "team", "group"}
+               "start", "end", "days", "length", "sort", "dir", "inactive", "id", "team", "group", "reason"}
     for field in re.findall(r"\b(?:r|data|row|c|col|column|cell)\.([a-z_]+)", script):
         assert field in allowed or field in {"push", "map", "filter", "slice", "sort", "forEach", "find", "join",
                                              "reverse", "checked", "value", "textContent", "appendChild"}, field
@@ -237,6 +237,14 @@ def test_people_js_renders_a_grouped_header_with_impact_delivery_participation()
     assert "group-start" in script and "group-impact" in script
     css = read("style.css")
     assert ".group-impact" in css and ".group-start" in css
+
+
+def test_people_js_explains_blank_cells_and_shows_the_claude_cost_column():
+    script, css = read("pages", "people.js"), read("style.css")
+    assert "cell.reason" in script and "cell-reason" in script and "title:" in script
+    assert '"cost_spent"' in script and "col.group" in script  # the group comes from the API, with a fallback
+    assert '"impact_per_dollar"' in script  # fallback group mapping keeps the cost column inside Impact
+    assert ".cell-reason" in css
 
 
 def test_rankings_defaults_to_impact_points_and_groups_the_picker():
@@ -308,3 +316,15 @@ def test_people_in_the_nav_opens_the_person_view_on_someone_by_default():
     assert 'window.location.replace("/person" + DA.query({ id:' in script  # no id: jump to a person
     assert "localStorage" in script and "da.person" in script  # the last person viewed comes first
     assert 'id="all-people" href="/people"' in html  # the matrix is one click away
+
+
+def test_person_page_shows_a_headline_strip_and_explains_a_blank_impact_per_dollar():
+    script, css = read("person-charts.js"), read("style.css")
+    assert 'id: "series-summary"' in script and "d.summary" in script and "window_days" in script
+    assert "Last " in script and "Claude cost" in script and "team median" in script
+    assert "impact_per_dollar" in script and "team_median_impact_per_dollar" in script and "claude_cost" in script
+    assert "No Claude cost is linked to this person yet, so Impact per dollar is blank." in script
+    assert "link their Claude email on the" in script and 'href: "/teams"' in script and "Teams screen" in script
+    assert "Waiting for Claude usage data." in script
+    assert "Loading…" in script.split("function load(")[1]
+    assert ".series-summary" in css
