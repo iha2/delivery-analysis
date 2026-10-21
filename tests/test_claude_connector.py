@@ -64,8 +64,9 @@ def test_building_the_connector_makes_no_request(tmp_path):
     built = build_connectors(settings, {"ANTHROPIC_ADMIN": KEY}, transport=transport({}, calls=calls))
     assert [c.name for c in built] == ["claude_code_analytics"] and calls == []
     assert build_connectors(settings, {}) == []
+    # the registry now builds the user_cost mode, which needs no admin prefix (see test_claude_user_cost.py)
     (plain,) = build_connectors(settings, {"ANTHROPIC": "sk-ant-api03-not-admin"}, transport=transport({}))
-    assert plain.validate() == [NOT_ADMIN]
+    assert plain.validate() == []
 
 
 def test_the_key_never_reaches_output_or_the_database(tmp_path, capsys):

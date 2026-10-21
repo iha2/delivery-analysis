@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Set, Tuple
 
@@ -132,6 +133,38 @@ def normalize_day(day: str, records: Iterable[Mapping[str, Any]]) -> DayResult:
             act["pull_requests"], act["edits_accepted"], act["edits_rejected"],
             json.dumps(act["tools"], sort_keys=True), ",".join(sorted(act["customer_types"])),
         ))
+    return result
+
+
+def _utc_day(value: Any) -> Optional[str]:
+    try:
+        moment = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone.utc)
+    return moment.astimezone(timezone.utc).date().isoformat()
+
+
+def normalize_cost_rows(rows: Iterable[Mapping[str, Any]]) -> DayResult:
+    """Sum user_cost_report rows per (UTC day, email, model); `amount` is a decimal string in cents."""
+    cost: Dict[Tuple[str, str, str], Decimal] = {}
+    result = DayResult()
+    for record in rows:
+        actor = record.get("actor") or {}
+        email = str(actor.get("email_address") or "").strip().lower()
+        day = _utc_day(record["starting_at"]) if record.get("starting_at") else None
+        if not email or day is None:
+            result.skipped += 1
+            continue
+        currency = str(record.get("currency") or "USD")
+        if currency != "USD":
+            raise NormalizeError(f"Claude cost for {day} is in {currency}, not USD; only USD is supported.")
+        key = (day, email, str(record.get("model") or "unknown"))
+        cost[key] = cost.get(key, Decimal(0)) + _cents(record.get("amount"))
+    for key in sorted(cost):
+        dollars = float((cost[key] / Decimal(100)).quantize(SIX_PLACES))
+        result.usage.append(UsageRow(key[0], "email", key[1], key[2], dollars, 0, 0, 0, 0))
     return result
 
 

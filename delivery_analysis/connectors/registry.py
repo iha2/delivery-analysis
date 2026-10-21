@@ -7,7 +7,7 @@ import httpx
 from delivery_analysis.connectors.base import Connector
 from delivery_analysis.connectors.bitbucket.client import BitbucketClient
 from delivery_analysis.connectors.bitbucket.connector import BitbucketConnector
-from delivery_analysis.connectors.claude_code.client import ADMIN_KEY_PREFIX, ClaudeCodeClient, usage_key
+from delivery_analysis.connectors.claude_code.client import ClaudeCodeClient, usage_key
 from delivery_analysis.connectors.claude_code.connector import ClaudeCodeConnector
 from delivery_analysis.connectors.jira.client import JiraClient, base_url_from, jira_credentials
 from delivery_analysis.connectors.jira.connector import JiraConnector
@@ -41,7 +41,7 @@ def build_connectors(
         connectors.append(
             ClaudeCodeConnector(
                 ClaudeCodeClient(claude_key, transport=transport),
-                admin_key=claude_key.startswith(ADMIN_KEY_PREFIX),
+                report="user_cost",
                 window_days=settings.window_days,
             )
         )

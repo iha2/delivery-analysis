@@ -13,8 +13,8 @@ from delivery_analysis.metrics.window import Window, local_day, week_start
 from delivery_analysis.tokens.config import DEFAULT_CONFIG, AttributionConfig
 
 TicketKey = Tuple[str, str]
-COVERAGE_NOTE = ("Claude cost covers Claude Code on the Console organization only; Bedrock, Vertex and "
-                 "Claude Enterprise usage is not included.")
+COVERAGE_NOTE = ("Claude cost covers Claude Code usage by Claude Enterprise users; chat and other products, "
+                 "direct API keys, Bedrock and Vertex are not included.")
 PROXY_NOTE = "Ask and generate are a coarse proxy (v1) from accepted edits: low confidence, context only."
 ORDER = {"high": 0, "medium": 1, "low": 2}
 

@@ -106,3 +106,52 @@ def transport(pages_by_day, status=None, calls=None):
         return httpx.Response(200, content=json.dumps(pages[index]).encode("utf-8"))
 
     return httpx.MockTransport(handler)
+
+
+# ---- user_cost_report shape (made-up people, *.example only) ----
+
+def cost_row(email="ada@corp.example", day="2026-03-17", amount="41280.000000", model="model-a", **extra):
+    row = {
+        "actor": {"type": "user_actor", "deleted": False, "email_address": email, "name": None, "user_id": "user_1"},
+        "amount": amount,
+        "list_amount": amount,
+        "currency": "USD",
+        "model": model,
+        "product": "claude_code",
+        "starting_at": f"{day}T00:00:00Z",
+        "ending_at": f"{day}T00:00:00Z",
+        "requests": 3,
+    }
+    row.update(extra)
+    return row
+
+
+def cost_page(rows, more=False, next_page=None, refreshed="2099-01-01T00:00:00Z"):
+    return {
+        "data": rows, "data_refreshed_at": refreshed, "has_more": more, "next_page": next_page,
+        "organization_id": "00000000-0000-0000-0000-000000000001",
+    }
+
+
+def cost_transport(pages_by_start=None, status=None, calls=None, default=None):
+    """Serve `pages_by_start[starting_at]` (list of pages, paged by `page-N`) for the user cost report.
+
+    `status` may be an int or a function of the 1-based call count returning an int or None.
+    """
+    pages_by_start = pages_by_start or {}
+    state = {"n": 0}
+
+    def handler(request):
+        state["n"] += 1
+        if calls is not None:
+            calls.append(request)
+        code = status(state["n"]) if callable(status) else status
+        if code is not None:
+            return httpx.Response(code, json={"error": {"type": "error", "message": "nope"}})
+        start = request.url.params.get("starting_at")
+        pages = pages_by_start.get(start, [default or cost_page([])])
+        token = request.url.params.get("page")
+        index = int(token.split("-")[1]) - 1 if token else 0
+        return httpx.Response(200, content=json.dumps(pages[index]).encode("utf-8"))
+
+    return httpx.MockTransport(handler)

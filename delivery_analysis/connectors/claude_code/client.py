@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import random
 import time
-from typing import Any, Callable, Dict, Iterator, Mapping, Optional, Set
+from dataclasses import dataclass
+from datetime import date, datetime, timedelta, timezone
+from typing import Any, Callable, Dict, Iterator, List, Mapping, Optional, Set
 
 import httpx
 
@@ -10,6 +12,7 @@ from delivery_analysis import __version__
 
 API_BASE = "https://api.anthropic.com"
 REPORT_PATH = "/v1/organizations/usage_report/claude_code"
+COST_PATH = "/v1/organizations/analytics/user_cost_report"
 ADMIN_KEY_PREFIX = "sk-ant-admin"
 RETRY_STATUSES = {429, 500, 502, 503, 504, 529}
 
@@ -32,6 +35,37 @@ class NotFoundError(ClaudeUsageError):
 
 class RateLimitedError(ClaudeUsageError):
     pass
+
+
+class StalePageError(ClaudeUsageError):
+    """HTTP 410: the page cursor expired, so the range has to restart from its first page."""
+
+
+@dataclass(frozen=True)
+class _Report:
+    path: str
+    unauthorized: str
+    forbidden: str
+    not_found: str
+
+
+USAGE_REPORT = _Report(
+    REPORT_PATH,
+    "The Claude usage key was rejected (HTTP 401). Check ANTHROPIC_ADMIN or ANTHROPIC; "
+    "an expired or revoked Admin key gives this.",
+    "The Claude usage API refused the key (HTTP 403). It needs an organization Admin key "
+    "(sk-ant-admin...) set in ANTHROPIC_ADMIN.",
+    "The Claude Code usage report was not found (HTTP 404). The organization may be a Claude "
+    "Enterprise org, which needs the Enterprise Analytics API (not supported yet).",
+)
+COST_REPORT = _Report(
+    COST_PATH,
+    "The Claude analytics key was rejected (HTTP 401). Check ANTHROPIC_ADMIN or ANTHROPIC; "
+    "an expired or revoked key gives this.",
+    "The Claude analytics API refused the key (HTTP 403). The key needs the read:analytics scope.",
+    "The Claude user cost report was not found (HTTP 404). It is only available to Claude Enterprise "
+    "organizations.",
+)
 
 
 def usage_key(environ: Mapping[str, str]) -> str:
@@ -70,7 +104,7 @@ class ClaudeCodeClient:
         self._jitter = jitter or random.random
         self._max_retries = max_retries
         self._min_interval = min_interval
-        self._url = base_url.rstrip("/") + REPORT_PATH
+        self._base = base_url.rstrip("/")
         self._last: Optional[float] = None
         self.requests_made = 0
 
@@ -95,12 +129,13 @@ class ClaudeCodeClient:
             delay = min(60.0, 2.0 ** (attempt + 1)) * (0.7 + 0.6 * self._jitter())
         self._sleep(delay)
 
-    def _get(self, params: Dict[str, Any]) -> Dict[str, Any]:
+    def _get(self, params: Dict[str, Any], report: _Report = USAGE_REPORT) -> Dict[str, Any]:
+        url = self._base + report.path
         for attempt in range(self._max_retries + 1):
             self._pace()
             self.requests_made += 1
             try:
-                response = self._http.get(self._url, params=params, headers=self._headers)
+                response = self._http.get(url, params=params, headers=self._headers)
             except httpx.HTTPError as exc:
                 if attempt >= self._max_retries:
                     raise ClaudeUsageError(
@@ -118,20 +153,13 @@ class ClaudeCodeClient:
                     raise ClaudeUsageError("The Claude usage API returned an unexpected response shape.")
                 return body
             if status == 401:
-                raise AuthError(
-                    "The Claude usage key was rejected (HTTP 401). Check ANTHROPIC_ADMIN or ANTHROPIC; "
-                    "an expired or revoked Admin key gives this."
-                )
+                raise AuthError(report.unauthorized)
             if status == 403:
-                raise ForbiddenError(
-                    "The Claude usage API refused the key (HTTP 403). It needs an organization Admin key "
-                    "(sk-ant-admin...) set in ANTHROPIC_ADMIN."
-                )
+                raise ForbiddenError(report.forbidden)
             if status == 404:
-                raise NotFoundError(
-                    "The Claude Code usage report was not found (HTTP 404). The organization may be a Claude "
-                    "Enterprise org, which needs the Enterprise Analytics API (not supported yet)."
-                )
+                raise NotFoundError(report.not_found)
+            if status == 410:
+                raise StalePageError("The Claude usage API page cursor expired (HTTP 410).")
             if status in RETRY_STATUSES:
                 if attempt < self._max_retries:
                     self._wait(attempt, response.headers.get("retry-after"))
@@ -161,3 +189,53 @@ class ClaudeCodeClient:
 
     def probe(self, day: str) -> None:
         self._get({"starting_at": day, "limit": 1})
+
+    def cost_pages(self, starting_day: str, ending_day: str, limit: int = 1000) -> Iterator[Dict[str, Any]]:
+        """Every page of the per-user cost report for [starting_day, ending_day) in daily buckets.
+
+        An expired cursor (HTTP 410) restarts the range from its first page once; pages are yielded
+        only after a whole attempt succeeded, so a restart never duplicates rows.
+        """
+        label = f"{starting_day}..{ending_day}"
+        for attempt in range(2):
+            try:
+                pages = list(self._cost_attempt(starting_day, ending_day, limit, label))
+            except StalePageError:
+                if attempt == 0:
+                    continue
+                raise ClaudeUsageError(
+                    f"The Claude usage API page cursor kept expiring for {label}; try again later."
+                ) from None
+            yield from pages
+            return
+
+    def _cost_attempt(self, starting_day: str, ending_day: str, limit: int, label: str) -> Iterator[Dict[str, Any]]:
+        token: Optional[str] = None
+        seen: Set[str] = set()
+        while True:
+            params: Dict[str, Any] = {
+                "starting_at": f"{starting_day}T00:00:00Z",
+                "ending_at": f"{ending_day}T00:00:00Z",
+                "bucket_width": "1d",
+                "group_by[]": ["model"],
+                "products[]": ["claude_code"],
+                "limit": limit,
+            }
+            if token:
+                params["page"] = token
+            body = self._get(params, COST_REPORT)
+            yield body
+            if not body.get("has_more"):
+                return
+            token = body.get("next_page")
+            if not token or token in seen:
+                raise ClaudeUsageError(
+                    f"The Claude usage API returned a missing or repeated page cursor for {label}; stopping that range."
+                )
+            seen.add(token)
+
+    def probe_cost(self, today: Optional[date] = None) -> None:
+        """One row, yesterday to today (UTC): proves the key, scope and plan."""
+        today = today or datetime.now(timezone.utc).date()
+        for _ in self.cost_pages((today - timedelta(days=1)).isoformat(), today.isoformat(), limit=1):
+            break
