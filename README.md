@@ -1,27 +1,41 @@
-# Delivery Analytics
+<p align="center">
+  <img src="docs/assets/logo.svg" alt="Delivery Analytics: a factory built from equations" width="760">
+</p>
 
-A local app that shows **each developer's delivery impact, per unit of AI cost**, from Bitbucket, Jira and Claude Code usage. It syncs those sources into one SQLite file and shows the results in your browser. Nothing leaves your machine, and it only ever reads from Bitbucket, Jira and Anthropic.
+<h1 align="center">Delivery Analytics</h1>
 
-The repository also still contains the original **GitHub Team Metrics** monthly report. It is unchanged and documented [further down](#the-original-tool-github-team-metrics).
-
-Design notes: [Confluence proposal](https://keyjira.atlassian.net/wiki/spaces/MOV/pages/4602593361/Proposal+for+Delivery+Analytics+App+in+MoveDocs) · [architecture](https://keyjira.atlassian.net/wiki/spaces/MOV/pages/4603183155/Delivery+Analytics+App+-+Architecture) · [Jira epic MD-9863](https://keyjira.atlassian.net/browse/MD-9863) · in this repo: [docs/](docs/README.md) and [AGENTS.md](AGENTS.md).
+<p align="center"><b>What did each developer deliver, what did the AI cost, and was it worth it?</b><br>
+A local app that turns Bitbucket, Jira and Claude Code usage into one number per person: <i>impact per dollar</i>.</p>
 
 ---
 
-## What it is for
+## What it does
 
-Counting commits and pull requests does not tell you who moved the product forward, and it gets *less* useful once developers work with AI tools, because volume rises for everyone. This app exists to answer the questions a manager actually has in a check-in:
+Counting commits and pull requests does not show who moved the product forward, and it gets *less* useful once people work with AI tools, because volume rises for everyone. Delivery Analytics measures what was **delivered**:
 
-- **What did this person deliver?** Story points of finished tickets, credited to the people whose code delivered them, and weighted by how much of the codebase the change touched.
-- **How much did they help others deliver?** Review comments that made the author change the code count as a contribution. Approvals count for half as much, because they take less investment.
-- **What did the AI cost, and was it worth it?** Impact per dollar of Claude usage.
-- **Is this person on track?** Rolling 30-day charts against a team median, so a single big ticket does not hide a quiet month.
+- **Delivery.** A finished ticket is worth its story points, scaled by how much of the codebase the change touched, and credited to the people whose pull requests delivered it.
+- **Participation.** A review comment that made the author change the code earns the reviewer a share of that pull request. Approvals count for half a comment.
+- **Cost.** Claude usage is attributed to the tickets a person worked on, so you can read **impact per dollar**.
+- **Trend.** Rolling 30-day charts against a team median, so one large ticket does not hide a quiet month.
 
-It is built to support the **AI-native 30/60/90 check-ins** as a **calibration aid, not a verdict**. It cannot see pairing, mentoring, openness to feedback, prompt quality or plan-mode habits; those still come from the manager's own observation. Treat any number as a prompt for a conversation.
+It runs on your machine, reads from Bitbucket, Jira and Anthropic, never writes to them, and answers on localhost only. It is a **calibration aid for check-ins, not a verdict**: it cannot see pairing, mentoring, prompt quality or how someone takes feedback.
+
+```mermaid
+flowchart LR
+    BB[Bitbucket<br>commits, PRs, review comments] --> S[(SQLite)]
+    JI[Jira<br>tickets, story points, status history] --> S
+    CL[Claude usage<br>cost per person per day] --> S
+    GIT[Local read-only clone<br>tree-sitter import graph] --> S
+    S --> M[Impact model]
+    M --> UI[Browser app<br>people, charts, rankings]
+    M --> CSV[CSV export]
+```
 
 ## How impact is calculated
 
-Every completed ticket with story points is valued, then shared between the pull request authors (**Delivery**) and the reviewers whose comments led to a change (**Participation**). **Impact = Delivery + Participation.**
+Every ticket with story points is valued, then shared between the pull request authors (**Delivery**) and the reviewers whose comments led to a change (**Participation**).
+
+**Impact = Delivery + Participation** &nbsp;·&nbsp; **Impact per dollar = Impact / Claude cost**
 
 ```
 File weight          w(f)  = 1 + log2(1 + number of files that import f) + 1 if f is an entry or root file
@@ -35,76 +49,64 @@ For each review comment that led to a change in the code:
   Reviewer credit    0.05  x V(p) x r(f)     (one reviewer's total on a pull request is capped at V(p))
   Author penalty     0.005 x V(p) x r(f)
 
-Impact(P) = Delivery(P) + Participation(P)
-  Delivery(P)       = sum over pull requests P authored of  V(p) x max(0, 1 - 0.005 x sum r(f))
-  Participation(P)  = sum over others' pull requests of     V(p) x min(1, 0.05  x sum r(f))   (P's own fixed comments)
-  Impact per dollar = Impact / Claude cost in the same window
+Delivery(P)       = sum over pull requests P authored of  V(p) x max(0, 1 - 0.005 x sum r(f))
+Participation(P)  = sum over others' pull requests of     V(p) x min(1, 0.05  x sum r(f))
 ```
 
-A commit is not impact; a pull request is. Commits only show which files a ticket changed. File weights come from a tree-sitter import graph of a local read-only clone (file level; function level is a possible later step). Reviewing is also reported as separate measures: **PRs reviewed** (others' pull requests where you left at least one comment, not merely asked) and **Review value** (comments plus half a point per approval).
+In plain words: a change to a file that many others import is worth more than a change to a leaf file; fixing a reviewer's catch in a core file costs more than in a leaf file; and a commit is not impact, a pull request is. A comment counts as acted on when a later commit changes the same file within 10 lines of it before the pull request closes.
 
-**Who gets the points.** The app follows the delivery director's velocity rule so its table agrees with his: the Jira `Dev1` and `Dev2` fields first (half each when both are set and differ), then Claude-era evidence, then linked pull request authors, then the assignee. A ticket counts from the first time it reached **Dev Done** or later, not only when it is Done, and the Jira sync also pulls tickets from other projects when a team member is Dev1 or Dev2.
+**Who gets the points.** Jira `Dev1` and `Dev2` first (half each when both are set and differ), then Claude-era evidence, then linked pull request authors, then the assignee. A ticket counts from the first time it reached **Dev Done** or later, and the Jira sync also pulls tickets from other projects when a team member is Dev1 or Dev2.
 
-## What we learned building it
+Reviewing is also reported separately: **PRs reviewed** (others' pull requests where you left at least one comment) and **Review value** (comments plus half a point per approval).
 
-These shaped the design and are the honest limits of what the numbers can tell you.
+## What you get
 
-1. **Participation belongs inside impact.** Our first split treated reviewing as a separate column; reviewing that changes the code is part of what gets delivered, so it is nested in Impact.
-2. **Platform counts are the wrong headline.** Aggregate impact beats "PRs merged" or "commits"; the raw counts stay available as context.
-3. **Review evidence is thin.** On MoveDocs, between 87 and 100 percent of each person's review events on teammates' pull requests were approvals. Across 947 pull requests there were 1,838 comments, 309 tied to a file and line, and 75 led to a change. "Catches" are counted in single digits, so the participation score is small and noisy.
-4. **Counting rules decide the answer.** Counting only Done tickets and crediting pull request authors did not match the director's velocity table. Counting from Dev Done and crediting Dev1/Dev2 brought the app within 8 points of it for all six people checked.
-5. **Output outside the selected projects is invisible** unless a person is a Dev1 or Dev2 on the ticket. Work in a repository the app does not clone (for example a second codebase) is not seen.
-6. **AI trailers on commits measure a tool setting as much as behaviour.** Compare a person only with their own earlier self, never as a score.
-7. **The app measures the project it lives in.** Tickets created to describe the app itself carry story points and can move the numbers they describe; give them no assignee and check the team totals afterwards.
-8. **Recent weeks look low.** Work waiting in Dev Done or not yet resolved is understated until it moves on.
-9. **Security is a feature.** Credentials never appear in output, tests use made-up people only, and the app answers on localhost only.
+| Screen | What it shows |
+|---|---|
+| **People** | Opens the Person view on the last person you looked at; "All people" opens the sortable matrix of Impact, Delivery and Participation |
+| **Person** | A person dropdown, rolling 30-day charts against the team median (impact, delivery, participation, impact per dollar, speed, durability, PRs reviewed, review value), a "Who counts as the team?" picker, CSV download, and the tickets and pull requests behind each number |
+| **Dashboard** | Throughput, time to merge, lead time, review load and work in progress |
+| **Rankings** | Team members ordered by any metric, with trend and sample size |
+| **Selection, Teams, Sources, Settings** | Choose repositories and projects, edit teams, see sync status, review settings (credential names only) |
 
 ## Quick start
 
-You need [uv](https://docs.astral.sh/uv/) and `git`. The project pins **Python 3.13** because the tree-sitter packages have no wheels for newer versions yet; the package itself supports 3.9 and later and falls back to flat file weights without tree-sitter.
+You need [uv](https://docs.astral.sh/uv/) and `git`. The project pins **Python 3.13** because the tree-sitter packages have no wheels for newer versions yet; the package supports 3.9 and later and falls back to flat file weights without tree-sitter.
 
 ```
 uv sync
-copy .env.example .env      (macOS and Linux: cp .env.example .env), then fill in the values
-uv run delivery-analysis doctor                                 shows which credentials are present (names only)
+cp .env.example .env                       (Windows: copy), then fill in the values
+uv run delivery-analysis doctor            shows which credentials are present (names only)
 
-uv run delivery-analysis repos add bitbucket:WORKSPACE/REPO    select a repository (checks access first)
-uv run delivery-analysis projects add jira:MD                   select a Jira project
+uv run delivery-analysis repos add bitbucket:WORKSPACE/REPO     select a repository (checks access first)
+uv run delivery-analysis projects add jira:KEY                  select a Jira project
 uv run delivery-analysis teams discover --repo bitbucket:REPO --save NAME   build a team from commits
 
-uv run delivery-analysis sync                                   sync every configured source
-uv run delivery-analysis code build                             clone, build the code graph, rebuild impact
-uv run delivery-analysis serve                                  open the app on http://127.0.0.1:8000
+uv run delivery-analysis sync              sync every configured source
+uv run delivery-analysis code build        clone, build the code graph, rebuild impact
+uv run delivery-analysis serve             open the app on http://127.0.0.1:8000
 ```
 
 | Variable in `.env` | Used for |
 |---|---|
 | `BITBUCKET` (and optional `BITBUCKET_WORKSPACE`) | Atlassian API token with `read:repository:bitbucket` and `read:pullrequest:bitbucket`; also used by git to clone |
 | `ATLASSIAN`, `ATLASSIAN_EMAIL` (and `JIRA_BASE_URL`) | Jira read access; a scoped token needs `JIRA_BASE_URL=https://api.atlassian.com/ex/jira/<cloudId>` |
-| `ANTHROPIC_ADMIN` (or `ANTHROPIC`) | Claude usage and cost; an Admin key (`sk-ant-admin...`), and the Enterprise per-user cost report needs the `read:analytics` scope |
+| `ANTHROPIC_ADMIN` (or `ANTHROPIC`) | Claude usage and cost; the Enterprise per-user cost report needs the `read:analytics` scope |
 
-Values are never printed or stored by the app; `doctor` shows names only. A sync also runs the issue-link pass, the team update, the code build for clones that already exist, the impact build and the Claude cost attribution. The first `code build` is the one that clones (it needs `BITBUCKET`).
+Values are never printed or stored by the app. Data lives in `delivery.sqlite` in the results folder (`GITHUB_ANALYSIS_RESULTS`, default `~/github-analysis-results`); clones sit beside it, read-only. Tests: `uv run pytest` (no network, no real credentials, made-up people only).
 
-## Screens
+## What building it taught us
 
-| Screen | What it shows |
-|---|---|
-| **People** (nav) | Opens the Person view on the last person you looked at; "All people" opens the sortable matrix of Impact, Delivery and Participation |
-| **Person** | A person dropdown, rolling 30-day charts against the team median (impact, delivery, participation, impact per dollar, speed, durability, PRs reviewed, review value), the "Who counts as the team?" picker, CSV download, and the tickets and pull requests behind the numbers |
-| **Dashboard** | Throughput, time to merge, lead time, review load and work in progress |
-| **Rankings** | Team members ordered by any metric, with trend, sample size and an unmapped row |
-| **Selection, Teams, Sources, Settings** | Choose repositories and projects, edit teams and map accounts, see sync status and refresh, review settings (credential names only) |
-| **Ask** | A placeholder for plain-language questions over the stored data; not built yet |
+1. **Participation belongs inside impact.** Reviewing that changes the code is part of what gets delivered.
+2. **Platform counts are the wrong headline.** Aggregate impact beats "PRs merged" or "commits".
+3. **Review evidence is thin.** In the repository we measured, 87 to 100 percent of each person's review events were approvals, and fewer than one comment in twenty led to a code change. Participation is small and noisy.
+4. **Counting rules decide the answer.** Counting from Dev Done and crediting Dev1 and Dev2 brought the app within 8 points of a delivery director's velocity table for all six people checked.
+5. **Work outside the selected repositories is invisible**, unless a person is Dev1 or Dev2 on the ticket.
+6. **AI trailers on commits measure a tool setting as much as behaviour.** Compare a person with their own earlier self, never as a score.
+7. **The app measures the project it lives in.** Tickets that describe the app carry story points and can move the numbers they describe.
+8. **Recent weeks look low**, because work waiting in Dev Done is understated until it moves on.
 
-"Who counts as the team?" lets you tick which people the dashed median is measured against, so a median is not dragged by people who are not main contributors. It applies one second after your last tick.
-
-## Where things live
-
-- **Database:** `delivery.sqlite` in the results folder (`GITHUB_ANALYSIS_RESULTS`, default `~/github-analysis-results`).
-- **Clones:** `code/<repository uuid>/` in the same folder, read-only.
-- **Code:** `delivery_analysis/` (`connectors`, `store`, `sync`, `metrics`, `code`, `tokens`, `app`, `cli`). See the architecture page above.
-- **Tests:** `uv run pytest` (no network, no real credentials, made-up people only).
-- **Specs and plans** live outside the repo, in the author's Planning folder.
+More in [docs/](docs/README.md) and [AGENTS.md](AGENTS.md).
 
 ---
 
@@ -130,10 +132,10 @@ After `delivery-analysis sync`, every team is updated: new committers are added,
 `delivery-analysis` can sync commits, pull requests, and review activity from Bitbucket Cloud into the local database.
 
 1. Create an Atlassian API token with `read:repository:bitbucket` and `read:pullrequest:bitbucket` and put it in `.env` as `BITBUCKET`. Optionally set `BITBUCKET_WORKSPACE` so you can use bare repo names (see `.env.example`).
-2. Select a repository (this checks access first): `uv run delivery-analysis repos add bitbucket:keyhealthtech/movedocs_v1.0`
+2. Select a repository (this checks access first): `uv run delivery-analysis repos add bitbucket:WORKSPACE/REPO`
 3. Sync: `uv run delivery-analysis sync --source bitbucket`
 4. See status and detail progress: `uv run delivery-analysis repos list`
-5. Build a team from the commits: `uv run delivery-analysis teams discover --repo bitbucket:movedocs_v1.0 --save MoveDocs`
+5. Build a team from the commits: `uv run delivery-analysis teams discover --repo bitbucket:REPO --save TeamName`
 6. Clone the repository and build the code-weighted impact: `uv run delivery-analysis code build` (add `--repo bitbucket:REPO` for one repository). It clones read-only into the results folder, reads which files each commit changed, weighs files with a tree-sitter import graph, and rebuilds the impact tables. Review comments are fetched with the pull request detail, one request per pull request, so a first backfill of a large repository takes about one budgeted run.
 
 The first sync covers the last 90 days. Pull request detail (merge time, review comments and approvals, file counts) is fetched in budgeted batches, newest first, so large repositories fill in over several syncs without hitting Bitbucket's rate limit. `repos list` shows how far detail has got. Assigned reviewers and whether each has approved are stored on every pull request.
@@ -142,7 +144,7 @@ The first sync covers the last 90 days. Pull request detail (merge time, review 
 
 `delivery-analysis` can sync issues, status history, story points and issue links from a Jira Cloud project into the local database.
 
-1. Put an Atlassian API token in `.env` as `ATLASSIAN` and the account email as `ATLASSIAN_EMAIL` (`JIRA_BASE_URL` defaults to `https://keyjira.atlassian.net`; a scoped token needs `https://api.atlassian.com/ex/jira/<cloudId>`).
+1. Put an Atlassian API token in `.env` as `ATLASSIAN` and the account email as `ATLASSIAN_EMAIL` (`JIRA_BASE_URL` defaults to `https://YOUR-SITE.atlassian.net`; a scoped token needs `https://api.atlassian.com/ex/jira/<cloudId>`).
 2. Select a project (this checks access, picks the story points field by how many issues fill it, and seeds the status map): `uv run delivery-analysis projects add jira:MD`
 3. Map any status the defaults do not know: `uv run delivery-analysis projects map jira:MD "Some Status" in_review` (categories: `todo`, `in_progress`, `in_review`, `done`, `dropped`). A sync stops with the list of unmapped statuses until they are mapped.
 4. Sync: `uv run delivery-analysis sync --source jira`, then `uv run delivery-analysis projects list` to see status, issue count and points field.
