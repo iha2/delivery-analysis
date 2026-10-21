@@ -22,14 +22,16 @@ def delivered_statuses(environ: Optional[Mapping[str, str]] = None) -> Tuple[str
 def derive_delivered(conn: sqlite3.Connection, statuses: Optional[Sequence[str]] = None) -> int:
     """Set work_item.delivered_at for every Jira item; returns how many items are delivered.
 
-    An item whose current status is delivered gets the earliest transition into any delivered status,
-    else its resolved date. Every other Jira item gets NULL.
+    An item is delivered when its current status is in the delivered set or its status category is done.
+    It gets the earliest transition into any delivered status, else its resolved date. Every other Jira
+    item (regressed, dropped, still open) gets NULL; DELIVERED_AT_SQL's fallback only serves databases
+    that never ran this.
     """
     names = tuple(statuses) if statuses is not None else DELIVERED_STATUSES
     marks = ",".join("?" for _ in names) or "NULL"
     with conn:
         conn.execute(
-            "UPDATE work_item SET delivered_at = CASE WHEN status IN (" + marks + ") THEN COALESCE("
+            "UPDATE work_item SET delivered_at = CASE WHEN status IN (" + marks + ") OR status_category = 'done' THEN COALESCE("
             "(SELECT MIN(t.occurred_at) FROM work_item_transition t WHERE t.work_item_id = work_item.source_id "
             "AND t.source = work_item.source AND t.to_status IN (" + marks + ") AND t.occurred_at IS NOT NULL), "
             "work_item.resolved_at) END WHERE source = 'jira'",

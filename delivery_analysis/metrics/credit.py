@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import sqlite3
 from collections import Counter
 from dataclasses import dataclass, field
@@ -31,9 +32,11 @@ CLAUDE_DEV_CREDIT_NOTE = (
 
 _DEV_SQL = (
     "SELECT record_id, name, value FROM property WHERE record_kind = 'work_item' "
-    "AND (name LIKE 'dev1!_%' ESCAPE '!' OR name LIKE 'dev2!_%' ESCAPE '!') "
+    "AND (name GLOB 'dev1_[0-9]*' OR name GLOB 'dev2_[0-9]*') "
     "AND value IS NOT NULL AND TRIM(value) != '' ORDER BY record_id, name"
 )
+
+_DEV_NAME = re.compile(r"^dev[12]_\d+$")  # the field slug plus its numeric id, nothing else
 
 _DONE_SQL = (
     "SELECT w.source_id, w.key, w.type, w.assignee_account, w.started_at, " + DELIVERED_AT_SQL + " AS resolved_at, "
@@ -91,7 +94,7 @@ def dev_shares(conn: sqlite3.Connection, issue_ids: Iterable[str]) -> Dict[str, 
         return {}
     accounts: Dict[str, Dict[str, str]] = {}
     for row in conn.execute(_DEV_SQL):
-        if row["record_id"] in wanted:
+        if row["record_id"] in wanted and _DEV_NAME.match(row["name"]):
             slot = accounts.setdefault(row["record_id"], {})
             slot.setdefault(row["name"][:4], row["value"].strip())
     shares: Dict[str, Dict[str, float]] = {}

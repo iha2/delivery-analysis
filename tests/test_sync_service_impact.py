@@ -113,3 +113,23 @@ def test_delivered_dates_are_derived_before_the_impact_rebuild_and_a_failure_nev
     monkeypatch.setattr(service, "derive_delivered", boom)
     _, lines, failed = service.sync_and_reconcile(conn, [], settings(), {"ATLASSIAN": "tok-XYZ"})
     assert "Delivered date update failed: bad date ***" in lines and failed == 0
+
+
+class _Noisy:
+    name = "jira"
+
+    def __init__(self, notices, unknown):
+        self.notices = notices
+        self.unknown_statuses = unknown
+
+
+def test_connector_notices_and_unknown_statuses_reach_the_lines_redacted(conn, monkeypatch):
+    monkeypatch.setattr(service, "run_sync", lambda *a, **k: [])
+    _, lines, _ = service.sync_and_reconcile(
+        conn,
+        [_Noisy(["no team members with accounts yet tok-XYZ"], {"Y", "X"}), _Noisy([], set())],
+        settings(), {"ATLASSIAN": "tok-XYZ"},
+    )
+    assert "jira: no team members with accounts yet ***" in lines
+    assert "Jira statuses with no mapping: X, Y; they count as to do until added" in lines
+    assert sum("no mapping" in line for line in lines) == 1

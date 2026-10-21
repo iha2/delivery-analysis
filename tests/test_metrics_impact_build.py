@@ -301,3 +301,26 @@ def test_the_summary_lines_name_every_count():
     for number in ("4", "3", "1", "2"):
         assert number in text
     assert len(summary.lines()) >= 2
+
+
+def _open_pr_fix(conn, commit_at):
+    code(conn, REPO, "src/a.py", 1.0)
+    issue(conn, "T", "acc-ann", resolved=DONE, started="2026-09-07T12:00:00Z", points=5)
+    sid = pr(conn, 100, "acc-ann", "OPEN", "2026-09-07T09:00:00Z")
+    link_pr(conn, 100, "T")
+    work(conn, sid, "c1", "acc-ann", "2026-09-08T09:00:00Z", {"src/a.py": [[1, 2]]})
+    comment(conn, sid, 1, "acc-bob", path="src/a.py", line=50)
+    work(conn, sid, "c2", "acc-ann", commit_at, {"src/a.py": [[50, 50]]})
+
+
+def test_an_open_pr_is_only_fixed_before_the_ticket_was_delivered(conn):
+    _open_pr_fix(conn, "2026-09-11T09:00:00Z")  # after DONE
+    rebuild_impact(conn, NOW)
+    assert fixes(conn) == []
+
+
+def test_an_open_pr_commit_before_the_delivered_date_fixes(conn):
+    _open_pr_fix(conn, "2026-09-09T09:00:00Z")  # before DONE
+    rebuild_impact(conn, NOW)
+    (fix,) = fixes(conn)
+    assert fix["fix_sha"] == "c2"

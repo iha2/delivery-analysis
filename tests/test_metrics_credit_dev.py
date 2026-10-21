@@ -15,9 +15,9 @@ def key(account):
 
 def dev(conn, issue_id, dev1=None, dev2=None):
     if dev1 is not None:
-        prop(conn, "work_item", issue_id, "dev1_customfield_10100", dev1)
+        prop(conn, "work_item", issue_id, "dev1_10100", dev1)
     if dev2 is not None:
-        prop(conn, "work_item", issue_id, "dev2_customfield_10101", dev2)
+        prop(conn, "work_item", issue_id, "dev2_10101", dev2)
 
 
 def test_two_different_developers_split_the_ticket_in_half(conn):
@@ -137,3 +137,12 @@ def test_the_impact_fallback_uses_dev_shares_before_the_assignee(conn):
     rebuild_impact(conn, "2026-10-15T12:00:00Z")
     out = {(r["issue_id"], r["actor_key"]): r["delivery"] for r in conn.execute("SELECT * FROM impact_share")}
     assert out == {("U", key("acc-bob")): 2.0, ("U", key("acc-cy")): 2.0, ("V", key("acc-ann")): 3.0}
+
+
+def test_a_property_that_only_starts_with_dev1_or_dev2_is_not_a_dev_field(conn):
+    seed_impact(conn)
+    prop(conn, "work_item", "2", "dev1_hours_customfield_10200", "acc-bob")
+    prop(conn, "work_item", "2", "dev2_notes", "acc-bob")
+    assert cr.dev_shares(conn, ["2"]) == {}
+    dev(conn, "2", dev1="acc-ann")
+    assert list(cr.dev_shares(conn, ["2"])["2"].values()) == [1.0]

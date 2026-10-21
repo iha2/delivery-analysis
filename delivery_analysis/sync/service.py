@@ -33,6 +33,16 @@ def sync_and_reconcile(
     results = run_sync(
         conn, connectors, overlap_days=settings.overlap_days, only=only, redact_values=secrets, log=log
     )
+    notice_lines: List[str] = []
+    for connector in connectors:
+        for notice in getattr(connector, "notices", None) or []:
+            notice_lines.append(redact(f"{connector.name}: {notice}", secrets))
+        unknown = sorted(getattr(connector, "unknown_statuses", None) or [])
+        if unknown:
+            notice_lines.append(redact(
+                f"{connector.name.capitalize()} statuses with no mapping: {', '.join(unknown)}; "
+                "they count as to do until added", secrets,
+            ))
     link_lines: List[str] = []
     if only is None or only in ("jira", "bitbucket"):
         try:
@@ -70,4 +80,4 @@ def sync_and_reconcile(
             lines.extend(summary.lines())
     except Exception as exc:  # attribution must never fail the sync
         lines.append("Token attribution failed: " + redact(str(exc) or exc.__class__.__name__, secrets))
-    return results, link_lines + lines, failed_teams
+    return results, notice_lines + link_lines + lines, failed_teams

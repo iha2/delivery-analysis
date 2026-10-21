@@ -112,6 +112,7 @@ def _near(hunks: List[List[int]], line: int) -> bool:
 def _load_prs(conn: sqlite3.Connection, cohort: List[sqlite3.Row]):
     """Pull requests per ticket; one that links several tickets belongs to the earliest resolved."""
     order = {row["source_id"]: index for index, row in enumerate(cohort)}
+    delivered = {row["source_id"]: row["resolved_at"] for row in cohort}
     chosen: Dict[str, sqlite3.Row] = {}
     for row in conn.execute(_PRS_SQL):
         if row["issue_id"] not in order:
@@ -127,7 +128,12 @@ def _load_prs(conn: sqlite3.Connection, cohort: List[sqlite3.Row]):
     for pr_id in sorted(chosen):
         row = chosen[pr_id]
         by_issue[row["issue_id"]].append(
-            _Pr(pr_id, row["repo"], row["author"], row["merged_at"] or row["closed_at"], files.get(pr_id, set()))
+            _Pr(
+                pr_id, row["repo"], row["author"],
+                # an open pull request is cut off at the ticket's delivered date, so later work never counts
+                row["merged_at"] or row["closed_at"] or delivered.get(row["issue_id"]),
+                files.get(pr_id, set()),
+            )
         )
     return by_issue
 

@@ -153,3 +153,28 @@ def test_a_database_that_never_derived_behaves_as_before(conn):
     assert [row["source_id"] for row in conn.execute(ib._COHORT_SQL)] == ["1"]
     assert [row["source_id"] for row in mj._done(conn, Scope(), WINDOW)[0]] == ["1"]
     assert list(tk.load_cohort(conn, WINDOW).tickets) == [("jira", "1")]
+
+
+def test_a_custom_delivered_set_still_counts_done_category_items(conn):
+    item(conn, "1", "COMPLETED", category="done", resolved="2026-09-12T10:00:00Z")
+    item(conn, "2", "Closed", category="done", resolved="2026-09-13T10:00:00Z")  # user-mapped to done
+    item(conn, "3", "Dev Done")
+    move(conn, "3", 1, "Dev Done", "2026-09-10T10:00:00Z")
+    item(conn, "4", "In Progress")
+    move(conn, "4", 1, "Dev Done", "2026-09-10T10:00:00Z")
+    move(conn, "4", 2, "In Progress", "2026-09-11T10:00:00Z")
+    item(conn, "5", "DISREGARD", category="dropped", resolved="2026-09-12T10:00:00Z")
+    assert dv.derive_delivered(conn, ("Dev Done",)) == 3
+    assert delivered_at(conn, "1") == "2026-09-12T10:00:00Z"
+    assert delivered_at(conn, "2") == "2026-09-13T10:00:00Z"
+    assert delivered_at(conn, "3") == "2026-09-10T10:00:00Z"
+    assert delivered_at(conn, "4") is None and delivered_at(conn, "5") is None
+    # the fallback must not resurrect anything derive left NULL
+    assert not {"4", "5"} & {r["source_id"] for r in conn.execute(ib._COHORT_SQL)}
+
+
+def test_a_done_item_uses_its_earliest_delivered_transition_even_with_a_custom_set(conn):
+    item(conn, "1", "COMPLETED", category="done", resolved="2026-09-30T10:00:00Z")
+    move(conn, "1", 1, "Dev Done", "2026-09-10T10:00:00Z")
+    dv.derive_delivered(conn, ("Dev Done",))
+    assert delivered_at(conn, "1") == "2026-09-10T10:00:00Z"
